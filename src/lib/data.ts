@@ -38,12 +38,21 @@ export type PersistedTrade = {
   updated_at: string;
 };
 
+export type PersistedProposalPayload = Record<string, unknown> & {
+  fingerprint?: string;
+  kind?: string;
+  symbol?: string;
+  executionSignature?: string;
+  paymentSignature?: string;
+  executedAt?: string;
+};
+
 export type PersistedProposal = {
   id: string;
   portfolio_id: string;
   wallet_address: string;
   chain_snapshot: Record<string, unknown>;
-  proposal: Record<string, unknown>;
+  proposal: PersistedProposalPayload;
   status: string;
   created_at: string;
   expires_at: string | null;
