@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { PublicKey } from '@solana/web3.js';
 import { DEVNET_ASSETS, DEVNET_CASH_MINT, DEVNET_CASH_SYMBOL } from './config/assets';
 import { CONNECTION, explorerAddressUrl, explorerTxUrl } from './config/network';
@@ -7,7 +7,7 @@ import { connectBrowserWallet, disconnectBrowserWallet, getConnectedWalletAddres
 import { executeDevnetTrade, getDevnetQuote, type DevnetQuote, type TradeSide } from './lib/execution';
 import { DEFAULT_PORTFOLIO_RULES, evaluatePortfolio, type PortfolioRules } from './lib/rules';
 import { fetchMainnetReferencePrices, type MainnetReferencePrice } from './lib/mainnet-prices';
-import { apiUrl, fetchJson } from './lib/api';
+import { fetchJson } from './lib/api';
 import { loadPortfolioData, recordActivity, recordTradeIntent, savePortfolio, saveRule, type PersistedActivity, type PersistedPortfolio, type PersistedRule } from './lib/data';
 
 const NAV = ['Portfolio', 'Markets', 'Rules', 'History', 'Passport'] as const;
@@ -20,7 +20,7 @@ type IconName = 'portfolio' | 'markets' | 'rules' | 'history' | 'passport' | 'wa
 
 function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
-  const paths: Record<IconName, JSX.Element> = {
+  const paths: Record<IconName, ReactElement> = {
     portfolio: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M8 4.5V3h8v1.5" /><path d="M7 10h10M7 14h6" /></>,
     markets: <><path d="M4 18V9M10 18V5M16 18v-3M22 18H2" /><path d="M5 8l5-3 6 4 5-5" /></>,
     rules: <><path d="M5 5h14M5 12h14M5 19h14" /><circle cx="9" cy="5" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="11" cy="19" r="1.5" /></>,
@@ -209,7 +209,7 @@ export default function PortfolioApp() {
     setFunding(true);
     setError(null);
     try {
-      const result = await fetchJson<{ signature: string }>("/api/devnet/faucet", {
+      const result = await fetchJson<{ signature: string }>('/api/devnet/faucet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet }),
@@ -387,7 +387,7 @@ export default function PortfolioApp() {
       </div>
       <div className="panel trade-panel">
         <div className="trade-head"><div><div className="eyebrow">ADD TO PORTFOLIO</div><h2>{selected.symbol}</h2><small>{selectedPrice ? `$${selectedPrice.toFixed(2)} Mainnet reference` : 'Reference unavailable'}</small></div><div className="side-toggle"><button className={side === 'buy' ? 'selected-side' : ''} onClick={() => { setSide('buy'); setQuote(null); }}>Buy</button><button className={side === 'sell' ? 'selected-side' : ''} onClick={() => { setSide('sell'); setQuote(null); }}>Sell</button></div></div>
-        <label>Quantity<input value={amount} inputMode="decimal" onChange={(event) => { setAmount(event.target.value); setQuote(null); }} /></label>
+        <label>Quantity<input value={amount} inputMode="decimal" onChange={(e) => { setAmount(e.target.value); setQuote(null); }} /></label>
         {quote && <div className="quote-box"><div><span>Reference</span><strong>${quote.referencePriceUsd.toFixed(2)}</strong></div><div><span>Devnet price</span><strong>${quote.executionPriceUsd.toFixed(2)}</strong></div><div><span>{quote.side === 'buy' ? 'Cost' : 'Return'}</span><strong>{quote.cashAmount.toFixed(2)} DEMO-USDC</strong></div><div><span>Network</span><strong>Devnet</strong></div></div>}
         <div className="trade-actions"><button className="secondary-button" onClick={getQuote} disabled={busy || !wallet}>Price it</button><button className="primary-button" onClick={executeTrade} disabled={!quote || busy}>{busy ? 'Confirming…' : `${side === 'buy' ? 'Buy' : 'Sell'} ${selected.referenceSymbol}`}</button></div>
       </div>
