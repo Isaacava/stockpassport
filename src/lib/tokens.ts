@@ -1,6 +1,6 @@
 import { PublicKey } from '@solana/web3.js';
 import { CONNECTION } from '../config/network';
-import { DEVNET_ASSETS } from '../config/assets';
+import { DEVNET_ASSETS, DEVNET_CASH_MINT, DEVNET_CASH_SYMBOL } from '../config/assets';
 
 const SPL_TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
@@ -20,9 +20,10 @@ export async function getDevnetTokenHoldings(owner: string): Promise<TokenHoldin
     'confirmed',
   );
 
-  const knownByMint = new Map(
-    DEVNET_ASSETS.filter((asset) => asset.mint).map((asset) => [asset.mint!, asset]),
-  );
+  const knownByMint = new Map([
+    ...DEVNET_ASSETS.filter((asset) => asset.mint).map((asset) => [asset.mint!, asset] as const),
+    ...(DEVNET_CASH_MINT ? [[DEVNET_CASH_MINT, { symbol: DEVNET_CASH_SYMBOL, id: undefined }] as const] : []),
+  ]);
 
   return response.value
     .map(({ account }) => {
@@ -33,7 +34,7 @@ export async function getDevnetTokenHoldings(owner: string): Promise<TokenHoldin
         mint,
         amount: String(parsed.tokenAmount.uiAmountString ?? parsed.tokenAmount.uiAmount ?? '0'),
         decimals: Number(parsed.tokenAmount.decimals),
-        ...(known ? { symbol: known.symbol, assetId: known.id } : {}),
+        ...(known ? { symbol: known.symbol, ...(known.id ? { assetId: known.id } : {}) } : {}),
       };
     })
     .filter((holding) => holding.amount !== '0');
