@@ -5,7 +5,7 @@ import { explorerAddressUrl, explorerTxUrl, CONNECTION } from './config/network'
 import { getDevnetTokenHoldings, type TokenHolding } from './lib/tokens';
 import { executeDevnetTrade, type DevnetQuote, type TradeSide, type WalletSigner } from './lib/execution';
 import { DEFAULT_PORTFOLIO_RULES, evaluatePortfolio, type PortfolioRules, type RuleProposal } from './lib/rules';
-import { loadPortfolioData, recordActivity, recordTradeIntent, savePortfolio, saveRule, type PersistedActivity, type PersistedPortfolio, type PersistedRule } from './lib/data';
+import { loadPortfolioData, recordActivity, recordRuleProposal, recordTradeIntent, savePortfolio, saveRule, updateRuleProposal, type PersistedActivity, type PersistedPortfolio, type PersistedProposal, type PersistedRule } from './lib/data';
 import { fetchMainnetReferencePrices, type MainnetReferencePrice } from './lib/mainnet-prices';
 
 type WalletProvider = WalletSigner & { connect: () => Promise<{ publicKey: PublicKey }>; disconnect?: () => Promise<void> };
@@ -17,6 +17,12 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 function apiUrl(path: string): string { return `${API_BASE}${path}`; }
 function provider(): WalletProvider | undefined { return (window as WindowWithSolana).solana; }
 function shortAddress(address: string): string { return `${address.slice(0, 4)}…${address.slice(-4)}`; }
+function proposalFingerprint(proposal: RuleProposal): string {
+  return JSON.stringify({ kind: proposal.kind, assetId: proposal.assetId ?? null, targetPct: proposal.targetPct ?? null, valueUsd: Number(proposal.valueUsd.toFixed(8)) });
+}
+function proposalRecord(proposal: RuleProposal, fingerprint: string): Record<string, unknown> {
+  return { id: proposal.id, kind: proposal.kind, assetId: proposal.assetId ?? null, symbol: proposal.symbol ?? null, reason: proposal.reason, targetPct: proposal.targetPct ?? null, valueUsd: proposal.valueUsd, fingerprint };
+}
 
 export default function AppV2() {
   const [active, setActive] = useState('Overview');
@@ -25,6 +31,7 @@ export default function AppV2() {
   const [holdings, setHoldings] = useState<TokenHolding[]>([]);
   const [portfolio, setPortfolio] = useState<PersistedPortfolio | null>(null);
   const [rules, setRules] = useState<PersistedRule[]>([]);
+  const [proposals, setProposals] = useState<PersistedProposal[]>([]);
   const [activities, setActivities] = useState<PersistedActivity[]>([]);
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [referencePrices, setReferencePrices] = useState<Record<string, MainnetReferencePrice>>({});
@@ -63,6 +70,7 @@ export default function AppV2() {
     setPortfolioName(data.portfolio.name);
     setPortfolioDescription(data.portfolio.description ?? '');
     setRules(data.rules);
+    setProposals(data.proposals);
     setActivities(data.activities);
     setTrades(data.trades.map((trade) => ({
       id: trade.id,
@@ -99,7 +107,7 @@ export default function AppV2() {
 
   const connectWallet = async () => {
     const p = provider();
-    if (!p?.connect || !p.signTransaction) return setError('A Solana wallet with transaction signing support was not found. Switch the wallet to Devnet.');
+    if (!p?.connect || !p.signTransaction || !p.signMessage) return setError('A Solana wallet with transaction and message signing support was not found. Switch the wallet to Devnet.');
     setBusy(true); setError(null); setMessage(null);
     try { const result = await p.connect(); setWallet(result.publicKey.toBase58()); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Wallet connection failed.'); }
@@ -108,7 +116,7 @@ export default function AppV2() {
 
   const disconnectWallet = async () => {
     await provider()?.disconnect?.();
-    setWallet(null); setSol(null); setHoldings([]); setPortfolio(null); setRules([]); setActivities([]); setTrades([]); setQuote(null);
+    setWallet(null); setSol(null); setHoldings([]); setPortfolio(null); setRules([]); setProposals([]); setActivities([]); setTrades([]); setQuote(null);
   };
 
   const refreshAll = async () => {
@@ -136,6 +144,43 @@ export default function AppV2() {
     targetAllocations: targets,
   }), [rulesForm.max, rulesForm.reserve, rulesForm.threshold, targets]);
   const evaluation = useMemo(() => evaluatePortfolio(positions, cashValue, rulesConfig), [positions, cashValue, rulesConfig]);
+
+  useEffect(() => {
+    if (!wallet || !portfolio || evaluation.proposals.length === 0) return;
+    let cancelled = false;
+    const sync = async () => {
+      const activePersisted = proposals.filter((item) => item.status === 'proposed' || item.status === 'authorized');
+      const existing = new Set(activePersisted.map((item) => String(item.proposal.fingerprint ?? '')));
+      for (const proposal of evaluation.proposals) {
+        if (proposal.kind === 'reserve-cash' || proposal.valueUsd <= 0) continue;
+        const fingerprint = proposalFingerprint(proposal);
+        if (existing.has(fingerprint) || cancelled) continue;
+        try {
+          const persisted = await recordRuleProposal(wallet, {
+            portfolioId: portfolio.id,
+            proposal: proposalRecord(proposal, fingerprint),
+            chainSnapshot: {
+              totalValueUsd: evaluation.totalValueUsd,
+              cashPct: evaluation.cashPct,
+              violations: evaluation.violations,
+              positions,
+              referencePriceSource: 'Solana Mainnet / Jupiter',
+              capturedAt: new Date().toISOString(),
+            },
+            status: 'proposed',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+          if (!cancelled) setProposals((current) => current.some((item) => item.id === persisted.id) ? current : [persisted, ...current]);
+          existing.add(fingerprint);
+        } catch (cause) {
+          if (!cancelled) setError(cause instanceof Error ? cause.message : 'Wallet authorization was required to persist the rule proposal.');
+          break;
+        }
+      }
+    };
+    sync().catch((cause) => { if (!cancelled) setError(cause instanceof Error ? cause.message : 'Unable to persist rule proposals.'); });
+    return () => { cancelled = true; };
+  }, [wallet, portfolio, evaluation.proposals, evaluation.totalValueUsd, evaluation.cashPct, evaluation.violations, positions, proposals]);
 
   const requestQuote = async () => {
     const amount = Number(tradeAmount);
@@ -192,7 +237,7 @@ export default function AppV2() {
   };
 
   const executeProposal = async (proposal: RuleProposal) => {
-    if (!wallet || !proposal.assetId) return setError('This proposal does not map to a directly executable asset action.');
+    if (!wallet || !portfolio || !proposal.assetId) return setError('This proposal does not map to a directly executable asset action.');
     const asset = DEVNET_ASSETS.find((candidate) => candidate.id === proposal.assetId);
     if (!asset) return setError('Proposal asset is not configured.');
     if (proposal.kind === 'buy-underweight' && evaluation.cashPct < rulesConfig.minReservePct) return setError('The current cash reserve is already below its minimum; sell or fund the wallet before buying.');
@@ -200,19 +245,77 @@ export default function AppV2() {
     if (!Number.isFinite(price) || price <= 0) return setError(`Mainnet reference price for ${asset.referenceSymbol} is unavailable. Refresh prices before executing the proposal.`);
     const quantity = proposal.valueUsd / price;
     if (!Number.isFinite(quantity) || quantity <= 0) return setError('Proposal amount is too small to execute.');
+    const fingerprint = proposalFingerprint(proposal);
     if (!window.confirm(`Authorize ${proposal.kind === 'sell-overweight' ? 'selling' : 'buying'} approximately ${quantity.toFixed(6)} ${asset.referenceSymbol}? Your wallet will sign a real Devnet transaction priced from the current Mainnet reference.`)) return;
 
     setBusy(true); setError(null); setMessage(null);
+    let persisted = proposals.find((item) => String(item.proposal.fingerprint ?? '') === fingerprint && (item.status === 'proposed' || item.status === 'authorized'));
     try {
+      if (!persisted) {
+        persisted = await recordRuleProposal(wallet, {
+          portfolioId: portfolio.id,
+          proposal: proposalRecord(proposal, fingerprint),
+          chainSnapshot: {
+            totalValueUsd: evaluation.totalValueUsd,
+            cashPct: evaluation.cashPct,
+            violations: evaluation.violations,
+            positions,
+            referencePriceSource: 'Solana Mainnet / Jupiter',
+            capturedAt: new Date().toISOString(),
+          },
+          status: 'proposed',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+        setProposals((current) => current.some((item) => item.id === persisted!.id) ? current : [persisted!, ...current]);
+      }
+
+      const authorized = await updateRuleProposal(wallet, persisted.id, {
+        status: 'authorized',
+        chainSnapshot: {
+          totalValueUsd: evaluation.totalValueUsd,
+          cashPct: evaluation.cashPct,
+          violations: evaluation.violations,
+          positions,
+          authorizedAt: new Date().toISOString(),
+          referencePriceSource: 'Solana Mainnet / Jupiter',
+          referencePriceUsd: price,
+        },
+      });
+      setProposals((current) => [authorized, ...current.filter((item) => item.id !== authorized.id)]);
+
       const side: TradeSide = proposal.kind === 'sell-overweight' ? 'sell' : 'buy';
       const response = await fetch(apiUrl(`/api/devnet/quote?assetId=${encodeURIComponent(asset.id)}&side=${side}&amount=${encodeURIComponent(String(quantity))}`), { cache: 'no-store' });
       const nextQuote = await response.json() as DevnetQuote & { error?: string };
       if (!response.ok) throw new Error(nextQuote.error || 'Unable to create proposal execution quote.');
-      await executeQuote(nextQuote);
-      await recordActivity(wallet, { eventType: 'rule_proposal_executed', signature: undefined, payload: { proposalId: proposal.id, kind: proposal.kind, assetId: proposal.assetId, targetPct: proposal.targetPct, valueUsd: proposal.valueUsd, referencePriceSource: nextQuote.referencePriceSource, referenceObservedAt: nextQuote.referenceObservedAt } });
+      const result = await executeQuote(nextQuote);
+      const executed = await updateRuleProposal(wallet, authorized.id, {
+        status: 'executed',
+        proposal: { ...authorized.proposal, executionSignature: result.settlementSignature, paymentSignature: result.paymentSignature, executedAt: new Date().toISOString() },
+        chainSnapshot: {
+          totalValueUsdBefore: evaluation.totalValueUsd,
+          cashPctBefore: evaluation.cashPct,
+          positionsBefore: positions,
+          referencePriceSource: nextQuote.referencePriceSource,
+          referenceObservedAt: nextQuote.referenceObservedAt,
+          referenceNetwork: nextQuote.referenceNetwork,
+          referencePriceUsd: nextQuote.referencePriceUsd,
+          executionPriceUsd: nextQuote.executionPriceUsd,
+          paymentSignature: result.paymentSignature,
+          settlementSignature: result.settlementSignature,
+          executedAt: new Date().toISOString(),
+        },
+      });
+      setProposals((current) => [executed, ...current.filter((item) => item.id !== executed.id)]);
+      await recordActivity(wallet, { eventType: 'rule_proposal_executed', signature: result.settlementSignature, payload: { proposalId: executed.id, kind: proposal.kind, assetId: proposal.assetId, targetPct: proposal.targetPct, valueUsd: proposal.valueUsd, referencePriceSource: nextQuote.referencePriceSource, referenceObservedAt: nextQuote.referenceObservedAt, referenceNetwork: nextQuote.referenceNetwork, paymentSignature: result.paymentSignature } });
       await Promise.all([refreshChain(wallet), refreshData(wallet), refreshPrices()]);
       setMessage(`Rule action executed for ${asset.referenceSymbol}. Devnet settlement used the current Mainnet reference price.`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Rule execution failed.'); await Promise.all([refreshChain(wallet), refreshData(wallet), refreshPrices()]).catch(() => undefined); }
+    } catch (cause) {
+      if (persisted) {
+        await updateRuleProposal(wallet, persisted.id, { status: 'failed', chainSnapshot: { failedAt: new Date().toISOString(), error: cause instanceof Error ? cause.message : 'Rule execution failed.', positions, totalValueUsd: evaluation.totalValueUsd } }).then((failed) => setProposals((current) => [failed, ...current.filter((item) => item.id !== failed.id)])).catch(() => undefined);
+      }
+      setError(cause instanceof Error ? cause.message : 'Rule execution failed.');
+      await Promise.all([refreshChain(wallet), refreshData(wallet), refreshPrices()]).catch(() => undefined);
+    }
     finally { setBusy(false); }
   };
 
@@ -262,11 +365,11 @@ export default function AppV2() {
   const renderPortfolio = () => <div className="grid"><div className="panel"><div className="eyebrow">PORTFOLIO SETTINGS</div><h2>{portfolio?.name ?? 'My Portfolio'}</h2><label>Portfolio name<input value={portfolioName} onChange={(event) => setPortfolioName(event.target.value)} /></label><label>Description<textarea value={portfolioDescription} onChange={(event) => setPortfolioDescription(event.target.value)} /></label><button className="primary-button" onClick={savePortfolioSettings} disabled={busy}>Save portfolio</button></div><div className="panel"><div className="eyebrow">CONFIRMED POSITIONS</div><h2>${evaluation.totalValueUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>{knownHoldings.length === 0 && <p>No positions yet. Fund Demo-USDC and buy an asset from Discover.</p>}{knownHoldings.map((holding) => { const asset = DEVNET_ASSETS.find((item) => item.id === holding.assetId)!; const price = referencePrices[asset.referenceSymbol]?.priceUsd ?? 0; const value = Number(holding.amount) * price; const pct = evaluation.totalValueUsd ? value / evaluation.totalValueUsd * 100 : 0; return <div className="holding-row" key={holding.mint}><div><strong>{asset.symbol}</strong><small>{Number(holding.amount).toLocaleString()} units · {pct.toFixed(1)}% of portfolio · ${price.toFixed(2)} Mainnet reference</small></div><strong>${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>; })}</div></div>;
 
   const renderRules = () => <div className="grid"><div className="panel"><div className="eyebrow">PROGRAMMABLE INVESTING</div><h2>Rules & target allocations</h2><p>Saving these values changes configuration only. Execution always requires an explicit wallet authorization.</p><div className="rule-form"><label>Maximum single asset %<input type="number" min="1" max="100" value={rulesForm.max} onChange={(event) => setRulesForm({ ...rulesForm, max: Number(event.target.value) })} /></label><label>Minimum cash reserve %<input type="number" min="0" max="100" value={rulesForm.reserve} onChange={(event) => setRulesForm({ ...rulesForm, reserve: Number(event.target.value) })} /></label><label>Rebalance threshold %<input type="number" min="0.1" max="50" value={rulesForm.threshold} onChange={(event) => setRulesForm({ ...rulesForm, threshold: Number(event.target.value) })} /></label><label>Recurring contribution target $<input type="number" min="0" value={rulesForm.contribution} onChange={(event) => setRulesForm({ ...rulesForm, contribution: Number(event.target.value) })} /></label></div><div className="eyebrow" style={{ marginTop: 20 }}>TARGET WEIGHTS</div>{DEVNET_ASSETS.map((asset) => <label key={asset.id}>{asset.referenceSymbol} target %<input type="number" min="0" max="100" value={targets[asset.id] ?? 0} onChange={(event) => setTargets({ ...targets, [asset.id]: Number(event.target.value) })} /></label>)}<button className="primary-button" onClick={saveAllRules} disabled={busy || !wallet}>{busy ? 'Saving…' : 'Save rules'}</button></div>
-    <div className="panel"><div className="eyebrow">CURRENT EVALUATION</div><h2>{evaluation.proposals.length} actionable proposals</h2>{evaluation.violations.length === 0 ? <p>No active violations in the current on-chain state.</p> : evaluation.violations.map((violation) => <div className="activity-row" key={violation}><strong>{violation}</strong></div>)}{evaluation.proposals.map((proposal) => <div className="activity-row" key={proposal.id}><div><strong>{proposal.symbol ?? 'Cash reserve'}</strong><small>{proposal.reason}</small></div><div><strong>${proposal.valueUsd.toFixed(2)}</strong>{proposal.assetId && <button className="secondary-button" onClick={() => executeProposal(proposal)} disabled={busy} style={{ marginTop: 8 }}>Authorize & execute</button>}</div></div>)}</div></div>;
+    <div className="panel"><div className="eyebrow">CURRENT EVALUATION</div><h2>{evaluation.proposals.length} actionable proposals</h2>{evaluation.violations.length === 0 ? <p>No active violations in the current on-chain state.</p> : evaluation.violations.map((violation) => <div className="activity-row" key={violation}><strong>{violation}</strong></div>)}{evaluation.proposals.map((proposal) => { const fingerprint = proposalFingerprint(proposal); const persisted = proposals.find((item) => String(item.proposal.fingerprint ?? '') === fingerprint); const stateLabel = persisted?.status ?? 'new'; return <div className="activity-row" key={proposal.id}><div><strong>{proposal.symbol ?? 'Cash reserve'}</strong><small>{proposal.reason} · {stateLabel}</small></div><div><strong>${proposal.valueUsd.toFixed(2)}</strong>{proposal.assetId && <button className="secondary-button" onClick={() => executeProposal(proposal)} disabled={busy || persisted?.status === 'executed'} style={{ marginTop: 8 }}>{persisted?.status === 'authorized' ? 'Continue execution' : 'Authorize & execute'}</button>}</div></div>; })}</div></div>;
 
-  const renderActivity = () => <div className="grid"><div className="panel"><div className="eyebrow">AUDIT TRAIL</div><h2>Persistent activity</h2>{activities.length === 0 ? <p>No persisted activity for this wallet yet.</p> : activities.map((item) => <div className="activity-row" key={item.id}><div><strong>{item.event_type}</strong><small>{new Date(item.created_at).toLocaleString()}</small></div>{item.signature && <a className="explorer-link" href={explorerTxUrl(item.signature)} target="_blank" rel="noreferrer">View tx ↗</a>}</div>)}</div><div className="panel"><div className="eyebrow">TRADE LIFECYCLE</div><h2>Execution records</h2>{trades.length === 0 ? <p>No trade intents for this wallet.</p> : trades.map((trade) => <div className="activity-row" key={trade.id}><div><strong>{trade.side.toUpperCase()} {trade.symbol}</strong><small>{trade.status} · {new Date(trade.createdAt).toLocaleString()}</small></div><div className="activity-links">{trade.paymentSignature && <a href={explorerTxUrl(trade.paymentSignature)} target="_blank" rel="noreferrer">payment ↗</a>}{trade.settlementSignature && <a href={explorerTxUrl(trade.settlementSignature)} target="_blank" rel="noreferrer">settlement ↗</a>}</div></div>)}</div></div>;
+  const renderActivity = () => <div className="grid"><div className="panel"><div className="eyebrow">AUDIT TRAIL</div><h2>Persistent activity</h2>{activities.length === 0 ? <p>No persisted activity for this wallet yet.</p> : activities.map((item) => <div className="activity-row" key={item.id}><div><strong>{item.event_type}</strong><small>{new Date(item.created_at).toLocaleString()}</small></div>{item.signature && <a className="explorer-link" href={explorerTxUrl(item.signature)} target="_blank" rel="noreferrer">View tx ↗</a>}</div>)}</div><div className="panel"><div className="eyebrow">PROPOSAL LIFECYCLE</div><h2>{proposals.length} persisted proposals</h2>{proposals.length === 0 ? <p>No persisted rule proposals for this wallet yet.</p> : proposals.map((item) => <div className="activity-row" key={item.id}><div><strong>{String(item.proposal.symbol ?? item.proposal.kind ?? 'Rule action')}</strong><small>{item.status} · {new Date(item.created_at).toLocaleString()}</small></div>{item.proposal.executionSignature && <a className="explorer-link" href={explorerTxUrl(String(item.proposal.executionSignature))} target="_blank" rel="noreferrer">Execution ↗</a>}</div>)}</div><div className="panel"><div className="eyebrow">TRADE LIFECYCLE</div><h2>Execution records</h2>{trades.length === 0 ? <p>No trade intents for this wallet.</p> : trades.map((trade) => <div className="activity-row" key={trade.id}><div><strong>{trade.side.toUpperCase()} {trade.symbol}</strong><small>{trade.status} · {new Date(trade.createdAt).toLocaleString()}</small></div><div className="activity-links">{trade.paymentSignature && <a href={explorerTxUrl(trade.paymentSignature)} target="_blank" rel="noreferrer">payment ↗</a>}{trade.settlementSignature && <a href={explorerTxUrl(trade.settlementSignature)} target="_blank" rel="noreferrer">settlement ↗</a>}</div></div>)}</div></div>;
 
-  const renderPassport = () => <div className="grid"><div className="hero-card"><div><div className="eyebrow">STOCKPASSPORT</div><h2>Portable portfolio record</h2><p>{wallet ? `Wallet ${shortAddress(wallet)} · ${knownHoldings.length} live positions · ${rules.length} saved rules · ${activities.length} indexed events.` : 'Connect a wallet to build a verifiable record from actual Devnet state.'}</p></div></div><div className="panel"><div className="eyebrow">PASSPORT CONTENT</div><div className="holding-row"><span>Network</span><strong>Solana Devnet</strong></div><div className="holding-row"><span>Ownership source</span><strong>On-chain token accounts</strong></div><div className="holding-row"><span>Price source</span><strong>Solana Mainnet · Jupiter</strong></div><div className="holding-row"><span>Execution source</span><strong>Solana Devnet · synthetic assets</strong></div><div className="holding-row"><span>Configuration source</span><strong>Supabase</strong></div><div className="holding-row"><span>Portfolio</span><strong>{portfolio?.name ?? 'Not created'}</strong></div><div className="holding-row"><span>Current proposals</span><strong>{evaluation.proposals.length}</strong></div>{wallet && <a className="explorer-link" href={explorerAddressUrl(wallet)} target="_blank" rel="noreferrer">Verify wallet on Explorer ↗</a>}</div></div>;
+  const renderPassport = () => <div className="grid"><div className="hero-card"><div><div className="eyebrow">STOCKPASSPORT</div><h2>Portable portfolio record</h2><p>{wallet ? `Wallet ${shortAddress(wallet)} · ${knownHoldings.length} live positions · ${rules.length} saved rules · ${activities.length} indexed events · ${proposals.length} persisted proposals.` : 'Connect a wallet to build a verifiable record from actual Devnet state.'}</p></div></div><div className="panel"><div className="eyebrow">PASSPORT CONTENT</div><div className="holding-row"><span>Network</span><strong>Solana Devnet</strong></div><div className="holding-row"><span>Ownership source</span><strong>On-chain token accounts</strong></div><div className="holding-row"><span>Price source</span><strong>Solana Mainnet · Jupiter</strong></div><div className="holding-row"><span>Execution source</span><strong>Solana Devnet · synthetic assets</strong></div><div className="holding-row"><span>Configuration source</span><strong>Supabase</strong></div><div className="holding-row"><span>Proposal lifecycle</span><strong>Supabase · wallet-signed</strong></div><div className="holding-row"><span>Portfolio</span><strong>{portfolio?.name ?? 'Not created'}</strong></div><div className="holding-row"><span>Current proposals</span><strong>{evaluation.proposals.length}</strong></div>{wallet && <a className="explorer-link" href={explorerAddressUrl(wallet)} target="_blank" rel="noreferrer">Verify wallet on Explorer ↗</a>}</div></div>;
 
   const page = active === 'Overview' ? renderOverview() : active === 'Discover' ? renderDiscover() : active === 'Portfolio' ? renderPortfolio() : active === 'Rules' ? renderRules() : active === 'Activity' ? renderActivity() : renderPassport();
   return <div className="shell"><aside className="sidebar"><div className="brand"><div className="brand-mark">SP</div><span>StockPassport</span></div><nav>{NAV.map((item) => <button key={item} className={active === item ? 'nav-item active' : 'nav-item'} onClick={() => setActive(item)}>{item}</button>)}</nav><div className="sidebar-foot"><span className={`status-dot ${rpcStatus}`} /> {rpcStatus === 'online' ? 'Solana Devnet online' : rpcStatus === 'offline' ? 'RPC unavailable' : 'Checking RPC'}</div></aside><main className="main"><header className="topbar"><div><div className="eyebrow">STOCKPASSPORT / {active.toUpperCase()}</div><h1>{active}</h1></div><div className="topbar-actions">{wallet ? <button className="wallet-button" onClick={disconnectWallet}>{shortAddress(wallet)}</button> : <button className="wallet-button" onClick={connectWallet} disabled={busy}>{busy ? 'Connecting…' : 'Connect wallet'}</button>}</div></header><section className="content">{message && <div className="notice"><div><strong>{message}</strong><p>State is sourced from Solana and/or persisted application records.</p></div></div>}{error && <div className="error-banner">{error}</div>}{page}</section>{wallet && <a className="wallet-state" href={explorerAddressUrl(wallet)} target="_blank" rel="noreferrer">{shortAddress(wallet)} · Devnet ↗</a>}</main></div>;
