@@ -1,15 +1,15 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import { createTransferCheckedInstruction, getAccount, getAssociatedTokenAddress, getOrCreateAssociatedTokenAccount } from '@solana/spl-token';
 import { createClient } from '@supabase/supabase-js';
 
 const ASSET_MINT_ENV: Record<string, string> = { 'nvda-demo': 'DEVNET_NVDA_MINT', 'aapl-demo': 'DEVNET_AAPL_MINT', 'msft-demo': 'DEVNET_MSFT_MINT', 'goog-demo': 'DEVNET_GOOG_MINT' };
-const PRICES_USD: Record<string, number> = { NVDA: 175, AAPL: 230, MSFT: 510, GOOG: 250 };
-const ASSET_TO_REFERENCE: Record<string, string> = { 'nvda-demo': 'NVDA', 'aapl-demo': 'AAPL', 'msft-demo': 'MSFT', 'goog-demo': 'GOOG' };
 const RPC_URL = process.env.DEVNET_RPC_URL || 'https://api.devnet.solana.com';
 const CASH_MINT = process.env.DEVNET_CASH_MINT;
 const MARKET_WALLET = process.env.DEVNET_MARKET_WALLET;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const QUOTE_SIGNING_SECRET = process.env.QUOTE_SIGNING_SECRET;
 
 function loadMarketKeypair(): Keypair {
   const raw = process.env.DEVNET_MARKET_KEYPAIR_JSON;
@@ -22,12 +22,16 @@ function parseUnits(value: string, decimals: number): bigint {
   if (fraction.length > decimals) throw new Error('Amount has too many decimal places');
   return BigInt(whole) * 10n ** BigInt(decimals) + BigInt((fraction + '0'.repeat(decimals)).slice(0, decimals) || '0');
 }
-function quoteFor(assetId: string, side: 'buy' | 'sell', amount: number): bigint {
-  const ref = ASSET_TO_REFERENCE[assetId];
-  if (!ref || !Number.isFinite(amount) || amount <= 0) throw new Error('Invalid asset or amount');
-  const reference = PRICES_USD[ref];
-  const spread = side === 'buy' ? 1.005 : 0.995;
-  return BigInt(Math.round(amount * reference * spread * 1_000_000));
+function signQuote(input: { quoteId: string; assetId: string; side: string; assetAmountUnits: string; cashAmountUnits: string; expiresAt: string }): string {
+  if (!QUOTE_SIGNING_SECRET) throw new Error('QUOTE_SIGNING_SECRET is not configured');
+  const payload = [input.quoteId, input.assetId, input.side, input.assetAmountUnits, input.cashAmountUnits, input.expiresAt].join('|');
+  return createHmac('sha256', QUOTE_SIGNING_SECRET).update(payload).digest('hex');
+}
+function verifyQuoteSignature(input: Parameters<typeof signQuote>[0], provided: string): boolean {
+  const expected = signQuote(input);
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  const providedBuffer = Buffer.from(provided, 'hex');
+  return expectedBuffer.length === providedBuffer.length && timingSafeEqual(expectedBuffer, providedBuffer);
 }
 function extractOwnerDelta(transaction: any, mint: string, owner: string): bigint {
   const pre = (transaction.meta?.preTokenBalances ?? []).filter((b: any) => b.mint === mint && b.owner === owner);
@@ -58,11 +62,16 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405 });
   if (!CASH_MINT || !MARKET_WALLET) return Response.json({ error: 'Devnet market is not configured' }, { status: 503 });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return Response.json({ error: 'Settlement persistence is not configured' }, { status: 503 });
+  if (!QUOTE_SIGNING_SECRET) return Response.json({ error: 'Quote signing is not configured' }, { status: 503 });
 
   try {
-    const body = await req.json() as { quoteId?: string; side?: 'buy' | 'sell'; assetId?: string; wallet?: string; paymentSignature?: string; assetAmount?: string; cashAmountUnits?: string; expiresAt?: string };
-    if (!body.quoteId || !body.side || !body.assetId || !body.wallet || !body.paymentSignature || !body.assetAmount || !body.cashAmountUnits || !body.expiresAt) return Response.json({ error: 'Missing settlement fields' }, { status: 400 });
-    if (Date.parse(body.expiresAt) < Date.now()) return Response.json({ error: 'Quote expired' }, { status: 400 });
+    const body = await req.json() as { quoteId?: string; quoteSignature?: string; side?: 'buy' | 'sell'; assetId?: string; wallet?: string; paymentSignature?: string; assetAmount?: string; assetAmountUnits?: string; cashAmountUnits?: string; expiresAt?: string };
+    if (!body.quoteId || !body.quoteSignature || !body.side || !body.assetId || !body.wallet || !body.paymentSignature || !body.assetAmount || !body.assetAmountUnits || !body.cashAmountUnits || !body.expiresAt) return Response.json({ error: 'Missing settlement fields' }, { status: 400 });
+    if (Date.parse(body.expiresAt) <= Date.now()) return Response.json({ error: 'Quote expired' }, { status: 400 });
+
+    const expectedAssetRaw = parseUnits(body.assetAmount, 6);
+    if (expectedAssetRaw.toString() !== body.assetAmountUnits) throw new Error('Asset amount units do not match the quoted amount');
+    if (!verifyQuoteSignature({ quoteId: body.quoteId, assetId: body.assetId, side: body.side, assetAmountUnits: body.assetAmountUnits, cashAmountUnits: body.cashAmountUnits, expiresAt: body.expiresAt }, body.quoteSignature)) throw new Error('Quote signature is invalid or was modified');
 
     const envName = ASSET_MINT_ENV[body.assetId];
     const stockMintValue = envName ? process.env[envName] : undefined;
@@ -74,10 +83,7 @@ export default async function handler(req: Request): Promise<Response> {
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
     const cashRaw = BigInt(body.cashAmountUnits);
-    const assetRaw = parseUnits(body.assetAmount, 6);
-    const expectedCashRaw = quoteFor(body.assetId, body.side, Number(body.assetAmount));
-    if (expectedCashRaw !== cashRaw) throw new Error('Quote amount is invalid or was modified');
-
+    const assetRaw = expectedAssetRaw;
     const existingTrade = await db.from('trade_intents').select('id,status,payment_signature,settlement_signature').eq('quote_id', body.quoteId).eq('wallet_address', user.toBase58()).maybeSingle();
     if (existingTrade.error) throw existingTrade.error;
     if (existingTrade.data?.status === 'settled' && existingTrade.data.settlement_signature) return Response.json({ ok: true, reused: true, side: body.side, assetId: body.assetId, paymentSignature: existingTrade.data.payment_signature, settlementSignature: existingTrade.data.settlement_signature, marketWallet: market.publicKey.toBase58() });
@@ -96,7 +102,6 @@ export default async function handler(req: Request): Promise<Response> {
     const connection = new Connection(RPC_URL, 'confirmed');
     const stockMint = new PublicKey(stockMintValue);
     const cashMint = new PublicKey(CASH_MINT);
-    const reference = PRICES_USD[ASSET_TO_REFERENCE[body.assetId]];
     let settlementSignature: string;
     if (body.side === 'buy') {
       await confirmPayment(connection, body.paymentSignature, CASH_MINT, body.wallet, -cashRaw, cashRaw);
@@ -107,7 +112,7 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     await db.from('trade_intents').update({ status: 'settled', payment_signature: body.paymentSignature, settlement_signature: settlementSignature, error_message: null }).eq('quote_id', body.quoteId).eq('wallet_address', user.toBase58());
-    return Response.json({ ok: true, reused: false, side: body.side, assetId: body.assetId, referencePriceUsd: reference, paymentSignature: body.paymentSignature, settlementSignature, marketWallet: market.publicKey.toBase58() });
+    return Response.json({ ok: true, reused: false, side: body.side, assetId: body.assetId, paymentSignature: body.paymentSignature, settlementSignature, marketWallet: market.publicKey.toBase58() });
   } catch (cause) {
     return Response.json({ error: cause instanceof Error ? cause.message : 'Settlement failed' }, { status: 400 });
   }
