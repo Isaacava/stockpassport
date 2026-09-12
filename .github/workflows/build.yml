@@ -15,4 +15,16 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - run: npm run build
+      - name: Build with diagnostic capture
+        shell: bash
+        run: |
+          set +e
+          npm run build 2>&1 | tee build-output.txt
+          status=${PIPESTATUS[0]}
+          exit "$status"
+      - name: Upload build diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: build-output.txt
