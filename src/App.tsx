@@ -1,46 +1,86 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { PublicKey } from '@solana/web3.js';
-import { DEVNET_CONNECTION, explorerTxUrl, getDevnetBalance } from './lib/solana';
+import { DEVNET_ASSETS } from './config/assets';
+import { explorerAddressUrl, CONNECTION } from './config/network';
+import { getDevnetTokenHoldings, type TokenHolding } from './lib/tokens';
 
-type WalletState = {
-  address: string;
-  sol: number;
+type WalletProvider = {
+  connect: () => Promise<{ publicKey: PublicKey }>;
+  disconnect?: () => Promise<void>;
 };
+
+type WindowWithSolana = Window & { solana?: WalletProvider };
 
 const nav = ['Overview', 'Discover', 'Portfolio', 'Rules', 'Activity'];
 
+function shortAddress(address: string): string {
+  return `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
 function App() {
   const [active, setActive] = useState('Overview');
-  const [wallet, setWallet] = useState<WalletState | null>(null);
+  const [wallet, setWallet] = useState<string | null>(null);
+  const [sol, setSol] = useState<number | null>(null);
+  const [holdings, setHoldings] = useState<TokenHolding[]>([]);
   const [connecting, setConnecting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [rpcStatus, setRpcStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshOnChainState = useCallback(async (address: string) => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      const publicKey = new PublicKey(address);
+      const [balance, tokenHoldings] = await Promise.all([
+        CONNECTION.getBalance(publicKey, 'confirmed'),
+        getDevnetTokenHoldings(address),
+      ]);
+      setSol(balance / 1_000_000_000);
+      setHoldings(tokenHoldings);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to read Devnet state.');
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    DEVNET_CONNECTION.getEpochInfo()
+    CONNECTION.getEpochInfo()
       .then(() => setRpcStatus('online'))
       .catch(() => setRpcStatus('offline'));
   }, []);
 
   async function connectWallet() {
-    const provider = (window as Window & {
-      solana?: { isPhantom?: boolean; connect: () => Promise<{ publicKey: PublicKey }> };
-    }).solana;
-
+    const provider = (window as WindowWithSolana).solana;
     if (!provider?.connect) {
-      window.alert('Install a Solana wallet extension/app that exposes window.solana.');
+      setError('No compatible Solana wallet was found. Use a wallet that exposes window.solana and switch it to Devnet.');
       return;
     }
 
     setConnecting(true);
+    setError(null);
     try {
       const response = await provider.connect();
       const address = response.publicKey.toBase58();
-      const sol = await getDevnetBalance(address);
-      setWallet({ address, sol });
+      setWallet(address);
+      await refreshOnChainState(address);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Wallet connection failed.');
     } finally {
       setConnecting(false);
     }
   }
+
+  async function disconnectWallet() {
+    const provider = (window as WindowWithSolana).solana;
+    if (provider?.disconnect) await provider.disconnect();
+    setWallet(null);
+    setSol(null);
+    setHoldings([]);
+  }
+
+  const knownHoldings = holdings.filter((holding) => holding.assetId);
 
   return (
     <div className="shell">
@@ -66,16 +106,20 @@ function App() {
             <div className="eyebrow">{active}</div>
             <h1>{active === 'Overview' ? 'A programmable portfolio for tokenized stocks.' : active}</h1>
           </div>
-          <button className="wallet-button" onClick={connectWallet} disabled={connecting}>
-            {connecting ? 'Connecting…' : wallet ? `${wallet.address.slice(0, 4)}…${wallet.address.slice(-4)}` : 'Connect wallet'}
-          </button>
+          <div className="topbar-actions">
+            {wallet && <button className="secondary-button" onClick={() => refreshOnChainState(wallet)} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh state'}</button>}
+            <button className="wallet-button" onClick={wallet ? disconnectWallet : connectWallet} disabled={connecting}>
+              {connecting ? 'Connecting…' : wallet ? shortAddress(wallet) : 'Connect wallet'}
+            </button>
+          </div>
         </header>
 
         <section className="content">
+          {error && <div className="error-banner">{error}</div>}
           <div className="notice">
             <div>
-              <strong>Foundation first</strong>
-              <p>Real Devnet state will drive balances and transactions. Synthetic test assets will be clearly labeled; live/reference market data stays separate.</p>
+              <strong>Devnet is authoritative</strong>
+              <p>Ownership comes from confirmed Solana token-account state. Synthetic assets are test securities and never imply real-world equity ownership.</p>
             </div>
             <div className="rpc-pill">{rpcStatus === 'online' ? 'RPC ONLINE' : rpcStatus === 'offline' ? 'RPC OFFLINE' : 'CHECKING RPC'}</div>
           </div>
@@ -86,15 +130,17 @@ function App() {
                 <div>
                   <div className="eyebrow">PORTFOLIO STATE</div>
                   <div className="hero-number">$0.00</div>
-                  <p>No holdings yet. Connect a Devnet wallet to start the real on-chain flow.</p>
+                  <p>{wallet ? 'Portfolio valuation will be added after reference-price and position layers are wired.' : 'Connect a Devnet wallet to begin the real on-chain flow.'}</p>
                 </div>
-                <button className="primary-button" onClick={connectWallet} disabled={connecting}>{wallet ? 'Wallet connected' : 'Connect wallet'}</button>
+                <button className="primary-button" onClick={wallet ? () => refreshOnChainState(wallet) : connectWallet} disabled={connecting || refreshing}>
+                  {wallet ? (refreshing ? 'Reading chain…' : 'Refresh on-chain state') : 'Connect wallet'}
+                </button>
               </div>
 
               <div className="metrics">
-                <div className="metric"><span>Wallet SOL</span><strong>{wallet ? wallet.sol.toFixed(4) : '—'}</strong><small>Devnet balance</small></div>
-                <div className="metric"><span>Holdings</span><strong>0</strong><small>Derived from token accounts</small></div>
-                <div className="metric"><span>Active rules</span><strong>0</strong><small>Portfolio configuration</small></div>
+                <div className="metric"><span>Wallet SOL</span><strong>{wallet && sol !== null ? sol.toFixed(4) : '—'}</strong><small>Confirmed Devnet balance</small></div>
+                <div className="metric"><span>Known holdings</span><strong>{knownHoldings.length}</strong><small>Derived from token accounts</small></div>
+                <div className="metric"><span>Configured assets</span><strong>{DEVNET_ASSETS.length}</strong><small>Synthetic Devnet registry</small></div>
                 <div className="metric"><span>Network</span><strong>Devnet</strong><small>Confirmed RPC state</small></div>
               </div>
 
@@ -102,21 +148,28 @@ function App() {
                 <div>
                   <div className="eyebrow">SOURCE OF TRUTH</div>
                   <h2>On-chain first</h2>
-                  <p>Wallet and token-account state will be authoritative. UI caches are never allowed to invent ownership.</p>
+                  <p>StockPassport reads the wallet and token accounts after every confirmed transaction. Frontend state is only a presentation cache.</p>
                 </div>
                 <div className="flow">
-                  <span>Wallet</span><b>→</b><span>Token accounts</span><b>→</b><span>Portfolio</span><b>→</b><span>Rules</span><b>→</b><span>Transaction</span>
+                  <span>Wallet</span><b>→</b><span>Token accounts</span><b>→</b><span>Portfolio</span><b>→</b><span>Rules</span><b>→</b><span>Execution</span>
                 </div>
               </div>
 
               <div className="panel">
-                <div className="panel-head"><div><div className="eyebrow">NEXT BUILD</div><h2>Real transaction path</h2></div></div>
-                <ol className="steps">
-                  <li><span>01</span><div><strong>Connect wallet</strong><small>Read the actual Devnet public key and SOL balance.</small></div></li>
-                  <li><span>02</span><div><strong>Read synthetic token accounts</strong><small>Discover real Demo-USDC and Demo-stock balances.</small></div></li>
-                  <li><span>03</span><div><strong>Build quote</strong><small>Reference market data + exact token quantity.</small></div></li>
-                  <li><span>04</span><div><strong>Sign & confirm</strong><small>Submit a real Solana transaction and verify final state.</small></div></li>
-                </ol>
+                <div className="panel-head"><div><div className="eyebrow">CURRENT DEVNET HOLDINGS</div><h2>Observed token state</h2></div></div>
+                {!wallet && <p>Connect a wallet to read token accounts.</p>}
+                {wallet && knownHoldings.length === 0 && <p>No configured synthetic asset balances were found in this wallet yet.</p>}
+                {knownHoldings.map((holding) => (
+                  <div className="holding-row" key={holding.mint}>
+                    <div><strong>{holding.symbol}</strong><small>{holding.mint}</small></div>
+                    <strong>{holding.amount}</strong>
+                  </div>
+                ))}
+                {wallet && (
+                  <a className="explorer-link" href={explorerAddressUrl(wallet)} target="_blank" rel="noreferrer">
+                    Open wallet on Solana Explorer ↗
+                  </a>
+                )}
               </div>
             </div>
           )}
@@ -125,32 +178,13 @@ function App() {
             <div className="panel empty-panel">
               <div className="eyebrow">SCAFFOLD</div>
               <h2>{active} module</h2>
-              <p>The navigation is intentionally wired before the feature layer. This module will consume the same real on-chain state and adapter interfaces instead of keeping a second fake data model.</p>
+              <p>This module will consume the same authoritative on-chain layer rather than introducing a separate fake balance model.</p>
             </div>
           )}
         </section>
-
-        {wallet && (
-          <a className="wallet-state" href="https://explorer.solana.com/?cluster=devnet" target="_blank" rel="noreferrer">
-            <span className="status-dot online" />
-            {wallet.address.slice(0, 6)}…{wallet.address.slice(-6)} · {wallet.sol.toFixed(4)} SOL · Open Devnet Explorer ↗
-          </a>
-        )}
       </main>
     </div>
   );
 }
 
 export default App;
-
-export function safePublicKey(value: string): PublicKey | null {
-  try {
-    return new PublicKey(value);
-  } catch {
-    return null;
-  }
-}
-
-export function transactionExplorer(signature: string): string {
-  return explorerTxUrl(signature);
-}
