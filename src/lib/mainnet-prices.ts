@@ -1,5 +1,7 @@
 import { fetchJson } from './api';
 
+export type MainnetReferencePriceSource = 'jupiter-price-v3-mainnet' | 'xstocks-public-price-api';
+
 export type MainnetReferencePrice = {
   assetId: string;
   demoSymbol: string;
@@ -10,7 +12,7 @@ export type MainnetReferencePrice = {
   liquidityUsd: number | null;
   blockId: number | null;
   observedAt: string;
-  source: 'jupiter-price-v3-mainnet';
+  source: MainnetReferencePriceSource;
   network: 'mainnet-beta';
 };
 
