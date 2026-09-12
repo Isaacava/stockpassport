@@ -2,9 +2,9 @@ import { Component, type ErrorInfo, type ReactNode, useEffect, useRef, useState 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { PublicKey } from '@solana/web3.js';
-import { useAppKit, useAppKitAccount, useAppKitProvider, useDisconnect } from '@reown/appkit/react';
+import { useAppKitAccount, useAppKitProvider, useDisconnect } from '@reown/appkit/react';
 import type { Provider } from '@reown/appkit-adapter-solana/react';
-import { REOWN_CONFIGURED } from './lib/appkit';
+import { appKit, REOWN_CONFIGURED } from './lib/appkit';
 import { createReownWalletSigner, setConnectedWalletSigner, setWalletDisconnect } from './lib/wallet';
 import './styles.css';
 import './portfolio.css';
@@ -49,18 +49,17 @@ function Root() {
   const [entered, setEntered] = useState(false);
   const [signInPending, setSignInPending] = useState(false);
   const signingRef = useRef(false);
-  const { open } = useAppKit();
   const { address, isConnected } = useAppKitAccount({ namespace: 'solana' });
   const { walletProvider } = useAppKitProvider<Provider>('solana');
   const { disconnect } = useDisconnect();
 
   useEffect(() => {
     if (address && walletProvider) {
-      const signer = createReownWalletSigner(address, walletProvider);
-      setConnectedWalletSigner(signer);
+      setConnectedWalletSigner(createReownWalletSigner(address, walletProvider));
     } else {
       setConnectedWalletSigner(null);
     }
+
     setWalletDisconnect(async () => {
       await disconnect({ namespace: 'solana' });
     });
@@ -68,6 +67,7 @@ function Root() {
 
   useEffect(() => {
     if (!signInPending || !isConnected || !address || !walletProvider || signingRef.current) return;
+
     signingRef.current = true;
     const signIn = async () => {
       try {
@@ -77,6 +77,7 @@ function Root() {
           'Network: Solana Devnet or Testnet',
           'Purpose: Open my StockPassport portfolio',
         ].join('\n');
+
         await walletProvider.signMessage(new TextEncoder().encode(statement));
         sessionStorage.setItem('stockpassport.wallet', new PublicKey(address).toBase58());
         setEntered(true);
@@ -87,16 +88,21 @@ function Root() {
         setSignInPending(false);
       }
     };
+
     void signIn();
   }, [signInPending, isConnected, address, walletProvider]);
 
   const enterWithWallet = () => {
-    if (!REOWN_CONFIGURED) {
-      window.alert('StockPassport WalletConnect is not configured yet. Add VITE_REOWN_PROJECT_ID from your Reown project settings.');
+    if (!REOWN_CONFIGURED || !appKit) {
+      window.alert('StockPassport WalletConnect is not configured.');
       return;
     }
+
     setSignInPending(true);
-    if (!isConnected) open({ view: 'Connect', namespace: 'solana' });
+
+    if (isConnected) return;
+
+    void appKit.open({ view: 'Connect', namespace: 'solana' });
   };
 
   return entered ? <PortfolioApp /> : <Landing onEnter={enterWithWallet} />;
