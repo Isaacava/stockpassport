@@ -1,55 +1,17 @@
 import { PublicKey, Transaction } from '@solana/web3.js';
-import {
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  TOKEN_PROGRAM_ID,
-  createAssociatedTokenAccountIdempotentInstruction,
-  createTransferCheckedInstruction,
-  getAssociatedTokenAddress,
-} from '@solana/spl-token';
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
 import { CONNECTION } from '../config/network';
 import { DEVNET_ASSETS, DEVNET_CASH_MINT } from '../config/assets';
 
 export type TradeSide = 'buy' | 'sell';
-
-export type DevnetQuote = {
-  quoteId: string;
-  expiresAt: string;
-  assetId: string;
-  referenceSymbol: string;
-  side: TradeSide;
-  assetAmount: number;
-  assetAmountUnits: string;
-  referencePriceUsd: number;
-  executionPriceUsd: number;
-  spreadBps: number;
-  cashAmount: number;
-  cashAmountUnits: string;
-  cashDecimals: number;
-  assetDecimals: number;
-  cashSymbol: string;
-  network: 'devnet';
-  marketWallet: string | null;
-  demoOnly: boolean;
-};
-
-export type WalletSigner = {
-  publicKey: PublicKey;
-  signTransaction: (transaction: Transaction) => Promise<Transaction>;
-};
+export type DevnetQuote = { quoteId: string; expiresAt: string; assetId: string; referenceSymbol: string; side: TradeSide; assetAmount: number; assetAmountUnits: string; referencePriceUsd: number; executionPriceUsd: number; spreadBps: number; cashAmount: number; cashAmountUnits: string; cashDecimals: number; assetDecimals: number; cashSymbol: string; network: 'devnet'; marketWallet: string | null; demoOnly: boolean };
+export type WalletSigner = { publicKey: PublicKey; signTransaction: (transaction: Transaction) => Promise<Transaction> };
 
 export async function getDevnetQuote(assetId: string, side: TradeSide, amount: number): Promise<DevnetQuote> {
-  const response = await fetch(`/api/devnet/quote?assetId=${encodeURIComponent(assetId)}&side=${side}&amount=${encodeURIComponent(String(amount))}`, {
-    cache: 'no-store',
-  });
+  const response = await fetch(`/api/devnet/quote?assetId=${encodeURIComponent(assetId)}&side=${side}&amount=${encodeURIComponent(String(amount))}`, { cache: 'no-store' });
   const data = await response.json() as DevnetQuote & { error?: string };
   if (!response.ok) throw new Error(data.error || 'Unable to get Devnet quote');
   return data;
-}
-
-function decimalAmountToUnits(value: string, decimals: number): bigint {
-  const [whole, fraction = ''] = value.split('.');
-  if (!/^\d+$/.test(whole) || !/^\d*$/.test(fraction) || fraction.length > decimals) throw new Error('Invalid token amount');
-  return BigInt(whole) * 10n ** BigInt(decimals) + BigInt((fraction + '0'.repeat(decimals)).slice(0, decimals) || '0');
 }
 
 function findAsset(assetId: string) {
@@ -59,42 +21,22 @@ function findAsset(assetId: string) {
   return { assetMint: new PublicKey(asset.mint), cashMint: new PublicKey(DEVNET_CASH_MINT), decimals: asset.decimals };
 }
 
-export async function buildDevnetPaymentTransaction(
-  quote: DevnetQuote,
-  signer: WalletSigner,
-): Promise<Transaction> {
+export async function buildDevnetPaymentTransaction(quote: DevnetQuote, signer: WalletSigner): Promise<Transaction> {
   if (!quote.marketWallet) throw new Error('Devnet market wallet is not configured');
   if (Date.parse(quote.expiresAt) <= Date.now()) throw new Error('Quote expired. Request a new quote.');
-
   const { assetMint, cashMint, decimals } = findAsset(quote.assetId);
   const market = new PublicKey(quote.marketWallet);
   const owner = signer.publicKey;
   const mint = quote.side === 'buy' ? cashMint : assetMint;
-  const rawAmount = quote.side === 'buy'
-    ? BigInt(quote.cashAmountUnits)
-    : BigInt(quote.assetAmountUnits);
-
+  const rawAmount = quote.side === 'buy' ? BigInt(quote.cashAmountUnits) : BigInt(quote.assetAmountUnits);
   const sourceAta = await getAssociatedTokenAddress(mint, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
   const destinationAta = await getAssociatedTokenAddress(mint, market, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-
   const accountInfo = await CONNECTION.getAccountInfo(sourceAta, 'confirmed');
   const transaction = new Transaction();
-  if (!accountInfo) {
-    transaction.add(
-      createAssociatedTokenAccountIdempotentInstruction(owner, sourceAta, owner, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID),
-    );
-  }
-
+  if (!accountInfo) transaction.add(createAssociatedTokenAccountIdempotentInstruction(owner, sourceAta, owner, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID));
   const destinationInfo = await CONNECTION.getAccountInfo(destinationAta, 'confirmed');
-  if (!destinationInfo) {
-    transaction.add(
-      createAssociatedTokenAccountIdempotentInstruction(owner, destinationAta, market, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID),
-    );
-  }
-
-  transaction.add(
-    createTransferCheckedInstruction(sourceAta, mint, destinationAta, owner, rawAmount, quote.side === 'buy' ? quote.cashDecimals : decimals),
-  );
+  if (!destinationInfo) transaction.add(createAssociatedTokenAccountIdempotentInstruction(owner, destinationAta, market, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID));
+  transaction.add(createTransferCheckedInstruction(sourceAta, mint, destinationAta, owner, rawAmount, quote.side === 'buy' ? quote.cashDecimals : decimals));
   transaction.feePayer = owner;
   const { blockhash, lastValidBlockHeight } = await CONNECTION.getLatestBlockhash('confirmed');
   transaction.recentBlockhash = blockhash;
@@ -102,7 +44,7 @@ export async function buildDevnetPaymentTransaction(
   return transaction;
 }
 
-export async function executeDevnetTrade(quote: DevnetQuote, signer: WalletSigner): Promise<{ paymentSignature: string; settlementSignature: string; marketWallet: string }> {
+export async function executeDevnetTrade(quote: DevnetQuote, signer: WalletSigner): Promise<{ paymentSignature: string; settlementSignature: string; marketWallet: string; reused?: boolean }> {
   const transaction = await buildDevnetPaymentTransaction(quote, signer);
   const signed = await signer.signTransaction(transaction);
   const paymentSignature = await CONNECTION.sendRawTransaction(signed.serialize(), { skipPreflight: false });
@@ -111,29 +53,12 @@ export async function executeDevnetTrade(quote: DevnetQuote, signer: WalletSigne
   const response = await fetch('/api/devnet/settle', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      side: quote.side,
-      assetId: quote.assetId,
-      wallet: signer.publicKey.toBase58(),
-      paymentSignature,
-      assetAmount: String(quote.assetAmount),
-      cashAmountUnits: quote.cashAmountUnits,
-      expiresAt: quote.expiresAt,
-    }),
+    body: JSON.stringify({ quoteId: quote.quoteId, side: quote.side, assetId: quote.assetId, wallet: signer.publicKey.toBase58(), paymentSignature, assetAmount: String(quote.assetAmount), cashAmountUnits: quote.cashAmountUnits, expiresAt: quote.expiresAt }),
   });
-  const result = await response.json() as { error?: string; settlementSignature?: string; marketWallet?: string };
-  if (!response.ok || !result.settlementSignature || !result.marketWallet) {
-    throw new Error(result.error || 'Market settlement failed after the user payment was confirmed');
-  }
-
+  const result = await response.json() as { error?: string; settlementSignature?: string; marketWallet?: string; reused?: boolean };
+  if (!response.ok || !result.settlementSignature || !result.marketWallet) throw new Error(result.error || 'Market settlement failed after the user payment was confirmed');
   await CONNECTION.confirmTransaction(result.settlementSignature, 'confirmed');
-  return {
-    paymentSignature,
-    settlementSignature: result.settlementSignature,
-    marketWallet: result.marketWallet,
-  };
+  return { paymentSignature, settlementSignature: result.settlementSignature, marketWallet: result.marketWallet, reused: result.reused };
 }
 
-export function humanAmountFromUnits(units: string, decimals: number): string {
-  return (Number(units) / 10 ** decimals).toLocaleString(undefined, { maximumFractionDigits: decimals });
-}
+export function humanAmountFromUnits(units: string, decimals: number): string { return (Number(units) / 10 ** decimals).toLocaleString(undefined, { maximumFractionDigits: decimals }); }
