@@ -10,13 +10,15 @@ const handlers = {
 };
 
 const allowedOrigin = process.env.FRONTEND_ORIGIN || '';
+const allowedHeaders = 'Content-Type, X-SP-Auth-Timestamp, X-SP-Auth-Message, X-SP-Auth-Signature';
 
 function applyCors(res, origin) {
   const allowed = allowedOrigin && origin === allowedOrigin ? allowedOrigin : allowedOrigin ? allowedOrigin : '*';
   res.setHeader('Access-Control-Allow-Origin', allowed);
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', allowedHeaders);
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Max-Age', '600');
 }
 
 async function readBody(req) {
