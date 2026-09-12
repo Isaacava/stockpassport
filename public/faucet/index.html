@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07111f">
+  <title>StockPassport · Devnet Faucet</title>
+  <style>
+    :root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#07111f;color:#f8fafc}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:#07111f}
+    .shell{width:min(100%,760px);margin:0 auto;padding:24px 16px 40px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:40px}
+    .brand{font-weight:800;letter-spacing:-.03em;font-size:20px}
+    .badge{display:inline-flex;align-items:center;gap:7px;border:1px solid #1d4ed8;background:#0b1933;color:#bfdbfe;border-radius:999px;padding:8px 11px;font-size:12px;font-weight:700}
+    .dot{width:7px;height:7px;border-radius:50%;background:#38bdf8}
+    .hero{text-align:center;padding:18px 4px 30px}
+    .eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:11px;font-weight:800;color:#60a5fa;margin-bottom:12px}
+    h1{margin:0;font-size:clamp(34px,8vw,60px);line-height:1.02;letter-spacing:-.055em}
+    .lead{margin:16px auto 0;max-width:560px;color:#94a3b8;font-size:16px;line-height:1.65}
+    .card{margin-top:24px;border:1px solid #1e293b;background:#0b1424;border-radius:24px;padding:24px;box-shadow:0 18px 60px rgba(0,0,0,.22)}
+    .amount{font-size:48px;line-height:1;font-weight:850;letter-spacing:-.06em;margin:4px 0 8px}
+    .muted{color:#94a3b8}
+    .wallet{margin:20px 0 8px;padding:13px 14px;border-radius:14px;background:#08101d;border:1px solid #1e293b;word-break:break-all;font-size:13px;color:#cbd5e1;min-height:47px;display:flex;align-items:center;justify-content:center}
+    button{width:100%;border:0;border-radius:14px;padding:15px 18px;font-size:15px;font-weight:800;cursor:pointer;background:#2563eb;color:white;transition:transform .15s,opacity .15s}
+    button:hover{transform:translateY(-1px)}
+    button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+    .secondary{margin-top:10px;background:#15243a;color:#dbeafe}
+    .status{margin-top:16px;min-height:24px;font-size:14px;line-height:1.5}
+    .success{color:#86efac}.error{color:#fda4af}.info{color:#93c5fd}
+    .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px}
+    .stat{padding:14px;border:1px solid #1e293b;border-radius:14px;text-align:left;background:#08101d}
+    .label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.08em;font-weight:800}
+    .value{margin-top:6px;font-weight:750;font-size:15px;color:#e2e8f0;word-break:break-word}
+    .notes{margin-top:22px;padding-top:20px;border-top:1px solid #1e293b;text-align:left;color:#94a3b8;font-size:13px;line-height:1.7}
+    a{color:#93c5fd;text-decoration:none}.footer{text-align:center;color:#64748b;font-size:12px;margin-top:22px}
+    @media (min-width:640px){.shell{padding:34px 24px 56px}.card{padding:34px}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="top">
+      <div class="brand">StockPassport</div>
+      <div class="badge"><span class="dot"></span> Solana Devnet</div>
+    </header>
+
+    <section class="hero">
+      <div class="eyebrow">Developer Faucet</div>
+      <h1>Free Devnet SOL</h1>
+      <p class="lead">Get test SOL for the StockPassport demo. These tokens have no mainnet value and are only used to pay Devnet transaction fees.</p>
+    </section>
+
+    <section class="card">
+      <div class="muted">Per claim</div>
+      <div class="amount">0.1 SOL</div>
+      <div class="muted">One claim per wallet every hour</div>
+
+      <div id="wallet" class="wallet">No wallet connected</div>
+      <button id="connect">Connect Solana Wallet</button>
+      <button id="claim" class="secondary" disabled>Claim 0.1 SOL</button>
+      <div id="status" class="status" aria-live="polite"></div>
+
+      <div class="stats">
+        <div class="stat"><div class="label">Network</div><div class="value">Solana Devnet</div></div>
+        <div class="stat"><div class="label">Balance</div><div id="balance" class="value">—</div></div>
+      </div>
+
+      <div class="notes">
+        This faucet sends SOL directly from the StockPassport Devnet faucet wallet. It does not send mainnet SOL. Your wallet never shares its private key with the faucet.
+        <div id="explorer" style="margin-top:10px"></div>
+      </div>
+    </section>
+
+    <div class="footer">Need to trade? Return to the <a href="/">StockPassport app</a>.</div>
+  </main>
+
+  <script>
+    const DEVNET_RPC = 'https://api.devnet.solana.com';
+    const walletEl = document.getElementById('wallet');
+    const connectBtn = document.getElementById('connect');
+    const claimBtn = document.getElementById('claim');
+    const statusEl = document.getElementById('status');
+    const balanceEl = document.getElementById('balance');
+    const explorerEl = document.getElementById('explorer');
+    let wallet = null;
+
+    function shortAddress(value) { return value ? value.slice(0, 6) + '…' + value.slice(-6) : ''; }
+    function setStatus(text, type='info') { statusEl.className = 'status ' + type; statusEl.textContent = text; }
+    function solanaProvider() { return window.solana || (window.phantom && window.phantom.solana); }
+
+    async function rpc(method, params) {
+      const response = await fetch(DEVNET_RPC, {
+        method: 'POST',
+        headers: {'content-type':'application/json'},
+        body: JSON.stringify({jsonrpc:'2.0',id:1,method,params})
+      });
+      const result = await response.json();
+      if (result.error) throw new Error(result.error.message || 'Devnet RPC error');
+      return result.result;
+    }
+
+    async function refreshBalance() {
+      if (!wallet) return;
+      try {
+        const result = await rpc('getBalance', [wallet, {commitment:'confirmed'}]);
+        balanceEl.textContent = (result.value / 1e9).toFixed(4) + ' SOL';
+      } catch { balanceEl.textContent = 'Unavailable'; }
+    }
+
+    async function connectWallet() {
+      const provider = solanaProvider();
+      if (!provider || typeof provider.connect !== 'function') {
+        setStatus('No compatible Solana wallet was found. Open this page in a wallet-enabled browser.', 'error');
+        return;
+      }
+      connectBtn.disabled = true;
+      try {
+        const result = await provider.connect();
+        wallet = result.publicKey.toString();
+        walletEl.textContent = wallet;
+        claimBtn.disabled = false;
+        connectBtn.textContent = 'Wallet Connected';
+        setStatus('Wallet connected. Make sure the wallet is using Solana Devnet.', 'success');
+        await refreshBalance();
+      } catch (error) {
+        setStatus(error?.message || 'Wallet connection failed.', 'error');
+      } finally {
+        connectBtn.disabled = false;
+      }
+    }
+
+    async function claim() {
+      if (!wallet) return;
+      claimBtn.disabled = true;
+      connectBtn.disabled = true;
+      explorerEl.textContent = '';
+      setStatus('Sending 0.1 SOL from the Devnet faucet…', 'info');
+      try {
+        const response = await fetch('/api/devnet/sol-faucet', {
+          method: 'POST',
+          headers: {'content-type':'application/json'},
+          body: JSON.stringify({wallet})
+        });
+        const result = await response.json();
+        if (!response.ok || !result.signature) throw new Error(result.error || 'Faucet request failed.');
+        setStatus('Claim confirmed on Solana Devnet.', 'success');
+        const link = 'https://explorer.solana.com/tx/' + encodeURIComponent(result.signature) + '?cluster=devnet';
+        explorerEl.innerHTML = '<a href="' + link + '" target="_blank" rel="noreferrer">View transaction on Solana Explorer</a>';
+        await refreshBalance();
+      } catch (error) {
+        setStatus(error?.message || 'Faucet request failed.', 'error');
+      } finally {
+        connectBtn.disabled = false;
+        claimBtn.disabled = false;
+      }
+    }
+
+    connectBtn.addEventListener('click', connectWallet);
+    claimBtn.addEventListener('click', claim);
+
+    const provider = solanaProvider();
+    if (provider?.isConnected && provider.publicKey) {
+      wallet = provider.publicKey.toString();
+      walletEl.textContent = wallet;
+      claimBtn.disabled = false;
+      connectBtn.textContent = 'Wallet Connected';
+      refreshBalance();
+    }
+  </script>
+</body>
+</html>
