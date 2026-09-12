@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useEffect, useRef, useState } from 'react';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { PublicKey } from '@solana/web3.js';
@@ -10,6 +10,40 @@ import './styles.css';
 import './portfolio.css';
 import PortfolioApp from './PortfolioApp';
 import Landing from './Landing';
+
+type ErrorBoundaryProps = { children: ReactNode };
+type ErrorBoundaryState = { error: Error | null };
+
+class AppErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('StockPassport runtime error', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <main className="sp-runtime-error">
+          <div className="sp-runtime-error__card">
+            <span className="sp-eyebrow">StockPassport</span>
+            <h1>StockPassport could not start.</h1>
+            <p>The app hit a browser-side configuration or wallet integration error.</p>
+            <pre>{this.state.error.message}</pre>
+            <button type="button" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </div>
+        </main>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function Root() {
   const [entered, setEntered] = useState(false);
@@ -70,6 +104,8 @@ function Root() {
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Root />
+    <AppErrorBoundary>
+      <Root />
+    </AppErrorBoundary>
   </React.StrictMode>,
 );
