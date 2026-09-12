@@ -51,10 +51,14 @@ export default async function handler(req: Request): Promise<Response> {
         portfolio = created.data;
       }
 
-      const rules = await db.from('portfolio_rules').select('id,portfolio_id,rule_type,enabled,parameters,created_at,updated_at').eq('portfolio_id', portfolio.id).order('created_at', { ascending: true });
-      if (rules.error) throw rules.error;
+      const [rulesResult, proposalsResult] = await Promise.all([
+        db.from('portfolio_rules').select('id,portfolio_id,rule_type,enabled,parameters,created_at,updated_at').eq('portfolio_id', portfolio.id).order('created_at', { ascending: true }),
+        db.from('rule_proposals').select('id,portfolio_id,wallet_address,chain_snapshot,proposal,status,created_at,expires_at').eq('portfolio_id', portfolio.id).eq('wallet_address', wallet).order('created_at', { ascending: false }).limit(100),
+      ]);
+      if (rulesResult.error) throw rulesResult.error;
+      if (proposalsResult.error) throw proposalsResult.error;
 
-      return json({ portfolio, portfolios, rules: rules.data ?? [], activities: activityResult.data ?? [], trades: tradesResult.data ?? [] });
+      return json({ portfolio, portfolios, rules: rulesResult.data ?? [], proposals: proposalsResult.data ?? [], activities: activityResult.data ?? [], trades: tradesResult.data ?? [] });
     }
 
     const body = await req.json() as { action?: string; wallet?: string; [key: string]: unknown };
@@ -81,9 +85,52 @@ export default async function handler(req: Request): Promise<Response> {
       return json({ rule: result.data });
     }
 
-    if (body.action === 'recordActivity') {
-      const result = await db.from('activity_events').insert({ wallet_address: wallet, user_id: null, event_type: typeof body.eventType === 'string' ? body.eventType : 'activity', network: 'devnet', signature: typeof body.signature === 'string' ? body.signature : null, payload: body.payload && typeof body.payload === 'object' ? body.payload : {} }).select('id,event_type,network,signature,payload,created_at').single();
+    if (body.action === 'recordRuleProposal') {
+      if (typeof body.portfolioId !== 'string') throw new Error('portfolioId is required');
+      const proposal = body.proposal && typeof body.proposal === 'object' ? body.proposal : {};
+      const chainSnapshot = body.chainSnapshot && typeof body.chainSnapshot === 'object' ? body.chainSnapshot : {};
+      const status = body.status === 'authorized' || body.status === 'executed' || body.status === 'expired' || body.status === 'rejected' ? body.status : 'proposed';
+      const result = await db.from('rule_proposals').insert({
+        portfolio_id: body.portfolioId,
+        wallet_address: wallet,
+        chain_snapshot: chainSnapshot,
+        proposal,
+        status,
+        expires_at: typeof body.expiresAt === 'string' ? body.expiresAt : null,
+      }).select('id,portfolio_id,wallet_address,chain_snapshot,proposal,status,created_at,expires_at').single();
       if (result.error) throw result.error;
+      return json({ proposal: result.data });
+    }
+
+    if (body.action === 'recordActivity') {
+      const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+      const result = await db.from('activity_events').insert({ wallet_address: wallet, user_id: null, event_type: typeof body.eventType === 'string' ? body.eventType : 'activity', network: 'devnet', signature: typeof body.signature === 'string' ? body.signature : null, payload }).select('id,event_type,network,signature,payload,created_at').single();
+      if (result.error) throw result.error;
+
+      if (body.eventType === 'rule_proposal_executed' && typeof payload.proposalId === 'string' && typeof payload.portfolioId === 'string') {
+        const existing = await db.from('rule_proposals').select('id').eq('portfolio_id', payload.portfolioId).eq('wallet_address', wallet).contains('proposal', { sourceProposalId: payload.proposalId }).limit(1).maybeSingle();
+        if (!existing.error && !existing.data) {
+          await db.from('rule_proposals').insert({
+            portfolio_id: payload.portfolioId,
+            wallet_address: wallet,
+            chain_snapshot: {
+              totalValueUsd: payload.totalValueUsd ?? null,
+              cashPct: payload.cashPct ?? null,
+              referencePriceSource: payload.referencePriceSource ?? null,
+              referenceObservedAt: payload.referenceObservedAt ?? null,
+            },
+            proposal: {
+              sourceProposalId: payload.proposalId,
+              kind: payload.kind ?? null,
+              assetId: payload.assetId ?? null,
+              targetPct: payload.targetPct ?? null,
+              valueUsd: payload.valueUsd ?? null,
+              settlementSignature: typeof body.signature === 'string' ? body.signature : null,
+            },
+            status: 'executed',
+          });
+        }
+      }
       return json({ activity: result.data });
     }
 
