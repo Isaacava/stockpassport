@@ -54,8 +54,8 @@
 - Frontend refreshes Mainnet reference prices every 30 seconds and after trade/rule execution.
 - Activity metadata records the Mainnet reference source/observed time alongside Devnet settlement signatures.
 - The demo never submits Mainnet trades; all user payments and opposing settlement transfers remain synthetic Devnet transactions.
-- New signed-quote protection makes the exact asset/cash amounts and quote expiry server-authenticated with `QUOTE_SIGNING_SECRET`.
-- Removed legacy hardcoded settlement prices from `api/devnet/settle.ts`; settlement now accepts only a valid server-signed quote, preserving Mainnet reference truth through the full quote → payment → settlement path.
+- New signed-quote protection makes exact asset/cash amounts and quote expiry server-authenticated with `QUOTE_SIGNING_SECRET`.
+- Removed legacy hardcoded settlement prices from `api/devnet/settle.ts`; settlement now accepts only a valid server-signed quote.
 
 ### Real execution
 - User payment is a real wallet-signed Solana Devnet transaction.
@@ -78,6 +78,10 @@
 ### Persistence/API
 - Added protected `/api/data` service-role API for wallet-scoped portfolio/rules/activity/trade lifecycle persistence.
 - Browser never receives Supabase service-role credentials.
+- `api/data.ts` now returns wallet-scoped `rule_proposals` alongside portfolio/rule/activity/trade state.
+- Executed rule actions are durably written into `rule_proposals` with chain snapshot, proposal metadata and settlement signature when the existing UI emits `rule_proposal_executed`.
+- The existing user authorization boundary remains explicit in the UI and wallet transaction signature; a future hardening step will cryptographically authenticate the wallet for all metadata API calls.
+- Added durable proposal recording support to the data API for proposed/authorized/executed/expired/rejected statuses.
 - Added `src/lib/data.ts` client abstraction.
 - Trade intents persist lifecycle statuses including `payment_pending`, `settled`, `failed` and `settlement_pending`.
 - Browser data/trade calls honor `VITE_API_BASE_URL`, allowing Vercel frontend traffic to use the dedicated Render API.
@@ -90,7 +94,7 @@
 - The SOL faucet pays `0.1 SOL` per successful claim, once per hour per wallet.
 - Added `api/devnet/sol-faucet.ts`, which transfers real Devnet SOL from the dedicated server-side market wallet and records `sol_faucet` activity for rate limiting/audit history.
 - Faucet UI shows wallet, Devnet network, current balance, claim status and a Solana Explorer link after confirmation.
-- The page now targets the dedicated Render API endpoint explicitly so it remains functional when the frontend is hosted separately on Vercel.
+- The page targets the dedicated Render API endpoint explicitly so it remains functional when the frontend is hosted separately on Vercel.
 - The SOL faucet is explicitly labelled Devnet-only and never represents mainnet SOL value.
 
 ### Token-2022 readiness
@@ -111,17 +115,14 @@
 - Auto-deploy configured from `main`; manual deploys were used when connected auto-deploy lagged behind GitHub pushes.
 - `server/index.mjs` exposes `/health`, `/api/data`, `/api/mainnet/prices`, `/api/devnet/quote`, `/api/devnet/faucet`, `/api/devnet/sol-faucet`, `/api/devnet/settle`.
 - `/health` advertises the Devnet execution network and Mainnet-Jupiter price source.
-- Required server-side Mainnet price configuration is documented in `.env.example` (`MAINNET_PRICE_API_URL`, optional `JUPITER_API_KEY`).
-- New required server-side secret: `QUOTE_SIGNING_SECRET`.
-- Latest Render deploy must be rechecked after the signed-quote commits; do not assume it is live until verified.
+- Required server-side Mainnet price configuration is documented in `.env.example`.
+- Required server-side quote secret: `QUOTE_SIGNING_SECRET`.
+- Latest live Render deploy is still commit `8885270...`; the newer data API commit must be deployed and verified before final setup handoff.
 
 ### CI
 - Build workflow runs `npm install` + `npm run build`.
-- Historical green run `34665591430` on commit `9de7603ef711089f47163cd3e286283a3943c871` is confirmed.
-- Mainnet price-layer run `34666347554` failed on two strict TypeScript issues: optional price narrowing and a duplicate ruleType payload field.
-- Fixed the duplicate ruleType field in commit `bf309f59e567971d21e3278902aeb9339940dcb1`.
-- Added strict `Number.isFinite` narrowing in commit `29280c2ab92478c995a4616a3e27f68bed1df9d1`.
-- Faucet feature commits were added, followed by signed quote/settlement commits `70ee3c7b46e5630e98557f0adf89cf87102954fd`, `1148216582a520dc2abba3824e1ba6ac1a5b6a37` and the later documentation commit; the newest CI run must be rechecked before calling the head green.
+- `34697023682` on commit `541993245aa30fa64b64db9822283dbb5bcba938` completed successfully after durable rule-proposal persistence was added.
+- Newest current main-branch run is `34697033674` for commit `1676beabc008003c9ebdc2959fc96240f17b3aaa`; it is still in progress at the time of this update.
 
 ## Current required configuration
 ### Render server
@@ -151,12 +152,12 @@
 - `VITE_DEVNET_GOOG_MINT`
 
 ## Remaining critical work
-1. Verify CI and the live Render deployment on the final current `main` commit after the quote/faucet changes.
+1. Verify current CI and deploy the latest successful main commit to Render.
 2. Configure the dedicated Render market wallet, synthetic mint addresses, Supabase service-role key and `QUOTE_SIGNING_SECRET`; then verify `/health`, Mainnet prices, signed quote, SOL faucet, token faucet, buy and sell with a real Devnet wallet.
 3. Create/configure the separate StockPassport Vercel project; existing `agentmarket` must remain untouched.
 4. Run complete Devnet lifecycle: SOL faucet → token faucet → buy → refresh → deliberately trigger rule violation → explicit proposal → wallet-signed rebalance → refresh → Activity/Passport verification.
-5. Add signed-wallet authorization to `/api/data` before broad public deployment.
-6. Persist the rule proposal lifecycle in `rule_proposals` with proposed/authorized/executed/expired/rejected transitions and execution metadata.
+5. Add cryptographic wallet-signature authorization to `/api/data` before broad public deployment.
+6. Expand proposal persistence to capture explicit authorized records before execution and automatic expiry/rejection transitions.
 7. Final mobile QA, failure-state QA, security QA and hackathon demo walkthrough.
 8. Mainnet execution adapter only after the Devnet demo is stable and a real xStocks/Jupiter-compatible execution route is verified. Until then Mainnet remains price/reference only.
 
