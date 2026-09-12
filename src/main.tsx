@@ -2,6 +2,7 @@ import { useState } from 'react';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import './portfolio.css';
 import PortfolioApp from './PortfolioApp';
 import Landing from './Landing';
 
