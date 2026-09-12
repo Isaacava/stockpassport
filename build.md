@@ -79,6 +79,8 @@
 - Added `src/lib/data.ts` client abstraction.
 - Trade intents persist lifecycle statuses including `payment_pending`, `settled`, `failed` and `settlement_pending`.
 - Browser data/trade calls honor `VITE_API_BASE_URL`, allowing Vercel frontend traffic to use the dedicated Render API.
+- Fixed the rule persistence request to emit one authoritative `ruleType` field.
+- Kept `target_allocation` as the wire/database rule type so it matches the live Supabase CHECK constraint and reloads correctly.
 
 ### Faucet
 - Demo-USDC faucet is a real Devnet market-wallet transfer.
@@ -100,15 +102,19 @@
 - URL: `https://stockpassport-market.onrender.com`
 - Service ID: `srv-daiaov6k1f9s73bgfpo0`
 - Region: Frankfurt.
-- Auto-deploy configured from `main`.
+- Auto-deploy configured from `main`; manual deploys were used when connected auto-deploy lagged behind GitHub pushes.
 - `server/index.mjs` exposes `/health`, `/api/data`, `/api/mainnet/prices`, `/api/devnet/quote`, `/api/devnet/faucet`, `/api/devnet/settle`.
 - `/health` advertises the Devnet execution network and Mainnet-Jupiter price source.
 - Required server-side Mainnet price configuration is documented in `.env.example` (`MAINNET_PRICE_API_URL`, optional `JUPITER_API_KEY`).
+- Latest verified live Render deploy before the current commit series is `dep-daikvvnqj5pc73ai1qp0`; the newest `main` commit is currently being deployed as `dep-dail2bm7bikc7393jl9g`.
 
 ### CI
 - Build workflow runs `npm install` + `npm run build`.
 - Historical green run `34665591430` on commit `9de7603ef711089f47163cd3e286283a3943c871` is confirmed.
-- New Mainnet price-layer changes triggered main-branch build run `34666347554` on commit `025fc68a641b24bcfdb2cf42722b5d2ae3f2fac7`; its latest observed status was `in_progress` at handoff, so do not call that head green until rechecked.
+- Mainnet price-layer run `34666347554` failed on two strict TypeScript issues: optional price narrowing and a duplicate ruleType payload field.
+- Fixed the duplicate ruleType field in commit `bf309f59e567971d21e3278902aeb9339940dcb1`.
+- Added strict `Number.isFinite` narrowing in commit `29280c2ab92478c995a4616a3e27f68bed1df9d1`.
+- Fresh main-branch build run `34696058053` is currently `in_progress`; do not call the newest head green until rechecked.
 
 ## Current required configuration
 ### Render server
@@ -137,7 +143,7 @@
 - `VITE_DEVNET_GOOG_MINT`
 
 ## Remaining critical work
-1. Verify the latest Mainnet-reference CI run and latest Render auto-deploy.
+1. Verify fresh CI run `34696058053` and latest Render deploy `dep-dail2bm7bikc7393jl9g`.
 2. Configure the dedicated Render market wallet, synthetic mint addresses and Supabase service-role key; then verify `/health`, Mainnet prices, quote, faucet, buy and sell with a real Devnet wallet.
 3. Create/configure the separate StockPassport Vercel project; existing `agentmarket` must remain untouched.
 4. Run complete Devnet lifecycle: faucet → buy → refresh → deliberately trigger rule violation → explicit proposal → wallet-signed rebalance → refresh → Activity/Passport verification.
