@@ -5,6 +5,7 @@ const handlers = {
   '/api/mainnet/prices': () => import('../api/mainnet/prices.ts'),
   '/api/devnet/quote': () => import('../api/devnet/quote.ts'),
   '/api/devnet/faucet': () => import('../api/devnet/faucet.ts'),
+  '/api/devnet/sol-faucet': () => import('../api/devnet/sol-faucet.ts'),
   '/api/devnet/settle': () => import('../api/devnet/settle.ts'),
 };
 
