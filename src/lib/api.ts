@@ -1,5 +1,9 @@
-const DEFAULT_API_BASE = 'https://stockpassport-market.onrender.com';
+const DEFAULT_API_BASE = '';
 
+/**
+ * StockPassport runs its API as same-origin Vercel Functions.
+ * VITE_API_BASE_URL is retained only for explicit local/testing overrides.
+ */
 export const API_BASE = (import.meta.env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE).replace(/\/$/, '');
 
 export function apiUrl(path: string): string {
@@ -11,13 +15,7 @@ export async function readJson<T>(response: Response): Promise<T> {
   const raw = await response.text();
   let data: unknown = null;
 
-  if (contentType.includes('application/json') && raw) {
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      data = null;
-    }
-  } else if (raw) {
+  if (raw) {
     try {
       data = JSON.parse(raw);
     } catch {
@@ -33,7 +31,8 @@ export async function readJson<T>(response: Response): Promise<T> {
   }
 
   if (data === null) {
-    throw new Error('The StockPassport API returned an invalid response.');
+    const hint = contentType ? ` (${contentType})` : '';
+    throw new Error(`The StockPassport API returned an invalid response${hint}.`);
   }
 
   return data as T;
