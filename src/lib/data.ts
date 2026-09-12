@@ -61,7 +61,7 @@ async function request<T>(init: RequestInit & { query?: string } = {}): Promise<
 }
 
 function normalizeRule(rule: PersistedRule): PersistedRule {
-  return rule.rule_type === 'target_allocation' ? { ...rule, rule_type: 'target_allocations' } : rule;
+  return rule;
 }
 
 export async function loadPortfolioData(wallet: string): Promise<PortfolioData> {
@@ -76,7 +76,7 @@ export async function savePortfolio(wallet: string, input: { id?: string; name: 
 
 export async function saveRule(wallet: string, input: { id?: string; portfolioId: string; ruleType: string; enabled: boolean; parameters: Record<string, unknown> }): Promise<PersistedRule> {
   const wireRuleType = input.ruleType === 'target_allocations' ? 'target_allocation' : input.ruleType;
-  const data = await request<{ rule: PersistedRule }>({ method: 'POST', body: JSON.stringify({ action: 'saveRule', wallet, ruleType: wireRuleType, ...input, ruleType: wireRuleType }) });
+  const data = await request<{ rule: PersistedRule }>({ method: 'POST', body: JSON.stringify({ action: 'saveRule', wallet, ...input, ruleType: wireRuleType }) });
   return normalizeRule(data.rule);
 }
 
