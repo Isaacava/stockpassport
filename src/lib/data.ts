@@ -1,4 +1,5 @@
 import { getConnectedWalletSigner } from './wallet';
+import { apiUrl, readJson } from './api';
 
 export type PersistedRule = {
   id: string;
@@ -69,9 +70,6 @@ export type PortfolioData = {
   trades: PersistedTrade[];
 };
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
-function apiUrl(path: string): string { return `${API_BASE}${path}`; }
-
 function toBase64(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -88,16 +86,28 @@ async function signedMutationHeaders(body: string, wallet: string): Promise<Reco
   const message = `StockPassport authorization\n${wallet}\n${timestamp}\nPOST\n/api/data\n${body}`;
   const result = await signer.signMessage(new TextEncoder().encode(message));
   const signature = result instanceof Uint8Array ? result : result.signature;
-  return { 'X-SP-Auth-Timestamp': timestamp, 'X-SP-Auth-Message': message, 'X-SP-Auth-Signature': toBase64(signature) };
+  return {
+    'X-SP-Auth-Timestamp': timestamp,
+    'X-SP-Auth-Message': message,
+    'X-SP-Auth-Signature': toBase64(signature),
+  };
 }
 
 async function request<T>(init: RequestInit & { query?: string; wallet?: string } = {}): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(init.headers as Record<string, string> | undefined) };
-  if (init.method === 'POST' && typeof init.body === 'string' && init.wallet) Object.assign(headers, await signedMutationHeaders(init.body, init.wallet));
-  const response = await fetch(apiUrl(`/api/data${init.query ?? ''}`), { ...init, headers, cache: 'no-store' });
-  const data = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(data.error || 'Unable to persist StockPassport state');
-  return data;
+  const body = typeof init.body === 'string' ? init.body : undefined;
+  const authHeaders = body && init.wallet ? await signedMutationHeaders(body, init.wallet) : {};
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    ...(init.headers as Record<string, string> | undefined),
+    ...authHeaders,
+  };
+  const response = await fetch(apiUrl(`/api/data${init.query ?? ''}`), {
+    ...init,
+    headers,
+    cache: 'no-store',
+  });
+  return readJson<T>(response);
 }
 
 function normalizeRule(rule: PersistedRule): PersistedRule {
@@ -106,7 +116,13 @@ function normalizeRule(rule: PersistedRule): PersistedRule {
 
 export async function loadPortfolioData(wallet: string): Promise<PortfolioData> {
   const data = await request<PortfolioData>({ query: `?wallet=${encodeURIComponent(wallet)}` });
-  return { ...data, rules: data.rules.map(normalizeRule), proposals: data.proposals ?? [] };
+  return {
+    ...data,
+    rules: data.rules.map(normalizeRule),
+    proposals: data.proposals ?? [],
+    activities: data.activities ?? [],
+    trades: data.trades ?? [],
+  };
 }
 
 export async function savePortfolio(wallet: string, input: { id?: string; name: string; description?: string }): Promise<PersistedPortfolio> {
@@ -135,11 +151,17 @@ export async function updateRuleProposal(wallet: string, id: string, input: { st
 }
 
 export async function recordActivity(wallet: string, input: { eventType: string; signature?: string; payload?: Record<string, unknown> }): Promise<PersistedActivity> {
-  const data = await request<{ activity: PersistedActivity }>({ method: 'POST', body: JSON.stringify({ action: 'recordActivity', wallet, ...input }) });
+  const data = await request<{ activity: PersistedActivity }>({
+    method: 'POST',
+    body: JSON.stringify({ action: 'recordActivity', wallet, ...input }),
+  });
   return data.activity;
 }
 
 export async function recordTradeIntent(wallet: string, input: { quoteId: string; assetId: string; side: 'buy' | 'sell'; assetAmountUnits: string; cashAmountUnits: string; status: string; paymentSignature?: string; settlementSignature?: string; errorMessage?: string }): Promise<PersistedTrade> {
-  const data = await request<{ trade: PersistedTrade }>({ method: 'POST', body: JSON.stringify({ action: 'recordTradeIntent', wallet, ...input }) });
+  const data = await request<{ trade: PersistedTrade }>({
+    method: 'POST',
+    body: JSON.stringify({ action: 'recordTradeIntent', wallet, ...input }),
+  });
   return data.trade;
 }
