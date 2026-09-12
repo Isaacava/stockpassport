@@ -1,3 +1,5 @@
+import { getConnectedWalletSigner } from './wallet';
+
 export type PersistedRule = {
   id: string;
   portfolio_id: string;
@@ -67,12 +69,6 @@ export type PortfolioData = {
   trades: PersistedTrade[];
 };
 
-type BrowserWallet = {
-  signMessage?: (message: Uint8Array) => Promise<Uint8Array | { signature: Uint8Array }>;
-};
-
-type WindowWithWallet = Window & { solana?: BrowserWallet };
-
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 function apiUrl(path: string): string { return `${API_BASE}${path}`; }
 
@@ -86,8 +82,8 @@ async function signedMutationHeaders(body: string, wallet: string): Promise<Reco
   const parsed = JSON.parse(body) as { action?: string };
   const protectedActions = new Set(['savePortfolio', 'saveRule', 'recordRuleProposal', 'updateRuleProposal']);
   if (!parsed.action || !protectedActions.has(parsed.action)) return {};
-  const signer = (window as WindowWithWallet).solana;
-  if (!signer?.signMessage) throw new Error('Wallet message signing is required for this action.');
+  const signer = getConnectedWalletSigner();
+  if (signer.publicKey.toBase58() !== wallet) throw new Error('The connected signing wallet does not match this portfolio wallet.');
   const timestamp = String(Date.now());
   const message = `StockPassport authorization\n${wallet}\n${timestamp}\nPOST\n/api/data\n${body}`;
   const result = await signer.signMessage(new TextEncoder().encode(message));
