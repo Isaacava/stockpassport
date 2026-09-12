@@ -46,8 +46,10 @@ Mint addresses are injected through Vite environment variables after running the
 ### CI
 - Initial CI failed because `actions/setup-node` had `cache: npm` but the repo had no lockfile.
 - Fixed `.github/workflows/build.yml` by removing npm cache.
-- CI now passes setup/checkout/node and reaches `npm install`; the newest run was still in progress at the last check.
-- Important: a green CI build has not yet been confirmed after the new application code.
+- CI infrastructure is healthy: checkout/setup-node/npm install all succeed.
+- The first full application build on the new code failed at `npm run build`.
+- A diagnostic artifact workflow was then added in commit `29a21086a4915f193f65898888a9d421f6889f2b`; run #14 was in progress at the latest check and is expected to expose the exact compiler output.
+- Do NOT mark CI green until the current code passes `npm run build`.
 
 ### Real Devnet market foundation
 - Added `api/devnet/quote.ts` with controlled Devnet reference prices, buy/sell spread, 30-second quote expiry and integer-unit amounts.
@@ -67,10 +69,19 @@ Mint addresses are injected through Vite environment variables after running the
 - Portfolio page now shows confirmed positions.
 - Activity page shows locally indexed trade/funding signatures with Solana Explorer links.
 - Passport page provides the audit/identity layer without duplicating token ownership.
-- Rules page establishes the next programmable portfolio milestone.
+- Rules page is still scaffolded in the current UI; the pure rules engine has now been added separately.
+
+### Rules engine
+- Added `src/lib/rules.ts` with deterministic evaluation for:
+  - max single-asset allocation;
+  - minimum cash reserve;
+  - rebalance threshold;
+  - target allocation drift;
+  - explicit proposal objects rather than automatic fund movement.
+- The next UI task is wiring this evaluator into the Rules page and then connecting proposals to explicit trade execution.
 
 ### Persistent handoff
-- `build.md` created as the canonical continuation log.
+- `build.md` is the canonical continuation log.
 - This file must be updated after every meaningful milestone.
 
 ## Current implementation in progress
@@ -115,15 +126,16 @@ This is intentionally two-leg rather than pretending to be an atomic exchange. T
 - `DEVNET_GOOG_MINT`
 
 ## Next build sequence (highest priority)
-1. Confirm GitHub Actions `npm install` + `npm run build` on the current application code and fix every compile error.
-2. Add the controlled Devnet market-wallet setup instructions/script and verify the market wallet has inventory for cash + synthetic stocks.
-3. Add a safe Devnet funding/risk guard so the faucet cannot be used as an unlimited public drain.
-4. Build rules engine: max allocation, minimum reserve, rebalance threshold, deterministic proposal output.
-5. Implement explicit rebalance execution using the same execution adapter.
-6. Expand activity from local cache toward chain-derived transaction discovery.
-7. Add Mainnet adapter boundary and Token-2022 support without pretending Mainnet execution is complete.
-8. Connect verified market/oracle reference prices while retaining a deterministic Devnet fallback.
-9. Final mobile QA, failure-state QA, security review, demo path and README/hackathon submission polish.
+1. Resolve the current `npm run build` compiler failure using the diagnostic artifact from run #14.
+2. Remove temporary CI diagnostic capture once the build is green.
+3. Add the controlled Devnet market-wallet setup instructions/script and verify the market wallet has inventory for cash + synthetic stocks.
+4. Add a safe Devnet funding/risk guard so the faucet cannot be used as an unlimited public drain.
+5. Wire `src/lib/rules.ts` into the Rules UI and make target allocations editable.
+6. Turn deterministic rule proposals into explicit, user-approved rebalance trade sequences.
+7. Expand activity from local cache toward chain-derived transaction discovery.
+8. Add Mainnet adapter boundary and Token-2022 support without pretending Mainnet execution is complete.
+9. Connect verified market/oracle reference prices while retaining a deterministic Devnet fallback.
+10. Final mobile QA, failure-state QA, security review, demo path and README/hackathon submission polish.
 
 ## Guardrails
 - No fake balances.
@@ -144,6 +156,7 @@ This is intentionally two-leg rather than pretending to be an atomic exchange. T
 - Two-leg settlement is not atomic; the UI must show the intermediate payment-confirmed / settlement-pending state clearly.
 - Public faucet needs abuse/rate controls before a broad demo deployment.
 - Server-side settlement endpoint should eventually persist quote/settlement IDs to prevent replay across retries.
+- The rules engine exists as a reusable module but is not yet wired to the Rules page.
 
 ## Current commits / checkpoints
 - CI fix: `5379dd6d914058041eb7e19e43d0100db2e3563b`
@@ -155,6 +168,8 @@ This is intentionally two-leg rather than pretending to be an atomic exchange. T
 - Demo-USDC holdings: `3e8f7e9c9b61ddb1565642d33e4b0dfc30c85635`
 - Trading UI: `0b48a275fe5639616238b48f1ae9e70ab925c8b3`
 - Latest style update: `c0cc11f0e2af0eb19df0980933f5025e28571899`
+- Rules engine: `34d6a266630831fbfc70467f99daaf07e41de89f`
+- Diagnostic CI workflow: `29a21086a4915f193f65898888a9d421f6889f2b`
 
 ## Handoff rule
 Update this file after every meaningful milestone with:
