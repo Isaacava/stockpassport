@@ -120,7 +120,7 @@
 - `DEVNET_AAPL_MINT`
 - `DEVNET_MSFT_MINT`
 - `DEVNET_GOOG_MINT`
-- `SUPABASE_URL=https://pwcsnthuvebzfpqprslw`
+- `SUPABASE_URL=https://pwcsnthuvebzfpqprslw.supabase.co`
 - `SUPABASE_SERVICE_ROLE_KEY` — server-only secret; never expose in Vite/browser.
 - `FRONTEND_ORIGIN` — exact Vercel production origin once the separate StockPassport Vercel project exists.
 - `MAINNET_PRICE_API_URL=https://api.jup.ag/price/v3`
