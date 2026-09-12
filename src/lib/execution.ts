@@ -4,7 +4,34 @@ import { CONNECTION } from '../config/network';
 import { DEVNET_ASSETS, DEVNET_CASH_MINT } from '../config/assets';
 
 export type TradeSide = 'buy' | 'sell';
-export type DevnetQuote = { quoteId: string; expiresAt: string; assetId: string; referenceSymbol: string; side: TradeSide; assetAmount: number; assetAmountUnits: string; referencePriceUsd: number; executionPriceUsd: number; spreadBps: number; cashAmount: number; cashAmountUnits: string; cashDecimals: number; assetDecimals: number; cashSymbol: string; network: 'devnet'; marketWallet: string | null; demoOnly: boolean };
+export type DevnetQuote = {
+  quoteId: string;
+  expiresAt: string;
+  assetId: string;
+  referenceSymbol: string;
+  referenceMainnetMint: string;
+  referencePriceUsd: number;
+  referencePriceChange24h: number | null;
+  referenceLiquidityUsd: number | null;
+  referenceBlockId: number | null;
+  referenceObservedAt: string;
+  referencePriceSource: 'jupiter-price-v3-mainnet';
+  referenceNetwork: 'mainnet-beta';
+  side: TradeSide;
+  assetAmount: number;
+  assetAmountUnits: string;
+  executionPriceUsd: number;
+  spreadBps: number;
+  cashAmount: number;
+  cashAmountUnits: string;
+  cashDecimals: number;
+  assetDecimals: number;
+  cashSymbol: string;
+  network: 'devnet';
+  executionNetwork: 'devnet';
+  marketWallet: string | null;
+  demoOnly: boolean;
+};
 export type WalletSigner = { publicKey: PublicKey; signTransaction: (transaction: Transaction) => Promise<Transaction> };
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
