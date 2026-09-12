@@ -3,11 +3,13 @@ import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAcc
 import { CONNECTION } from '../config/network';
 import { DEVNET_ASSETS, DEVNET_CASH_MINT } from '../config/assets';
 import type { WalletSigner } from './wallet';
+import { fetchJson, apiUrl, readJson } from './api';
 export type { WalletSigner } from './wallet';
 
 export type TradeSide = 'buy' | 'sell';
 export type DevnetQuote = {
   quoteId: string;
+  quoteSignature?: string;
   expiresAt: string;
   assetId: string;
   referenceSymbol: string;
@@ -35,14 +37,8 @@ export type DevnetQuote = {
   demoOnly: boolean;
 };
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
-function apiUrl(path: string): string { return `${API_BASE}${path}`; }
-
 export async function getDevnetQuote(assetId: string, side: TradeSide, amount: number): Promise<DevnetQuote> {
-  const response = await fetch(apiUrl(`/api/devnet/quote?assetId=${encodeURIComponent(assetId)}&side=${side}&amount=${encodeURIComponent(String(amount))}`), { cache: 'no-store' });
-  const data = await response.json() as DevnetQuote & { error?: string };
-  if (!response.ok) throw new Error(data.error || 'Unable to get Devnet quote');
-  return data;
+  return fetchJson<DevnetQuote>(`/api/devnet/quote?assetId=${encodeURIComponent(assetId)}&side=${side}&amount=${encodeURIComponent(String(amount))}`);
 }
 
 function findAsset(assetId: string) {
@@ -82,10 +78,11 @@ export async function executeDevnetTrade(quote: DevnetQuote, signer: WalletSigne
   await CONNECTION.confirmTransaction({ signature: paymentSignature, blockhash: transaction.recentBlockhash!, lastValidBlockHeight: transaction.lastValidBlockHeight! }, 'confirmed');
   const settlementResponse = await fetch(apiUrl('/api/devnet/settle'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ quoteId: quote.quoteId, wallet: signer.publicKey.toBase58(), paymentSignature }),
+    cache: 'no-store',
   });
-  const settlement = await settlementResponse.json() as { settlementSignature?: string; marketWallet?: string; reused?: boolean; error?: string };
-  if (!settlementResponse.ok || !settlement.settlementSignature || !settlement.marketWallet) throw new Error(settlement.error || 'Devnet settlement failed');
+  const settlement = await readJson<{ settlementSignature?: string; marketWallet?: string; reused?: boolean }>(settlementResponse);
+  if (!settlement.settlementSignature || !settlement.marketWallet) throw new Error('Devnet settlement returned an incomplete response.');
   return { paymentSignature, settlementSignature: settlement.settlementSignature, marketWallet: settlement.marketWallet, reused: settlement.reused };
 }
