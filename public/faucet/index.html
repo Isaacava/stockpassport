@@ -76,6 +76,7 @@
 
   <script>
     const DEVNET_RPC = 'https://api.devnet.solana.com';
+    const API_BASE = 'https://stockpassport-market.onrender.com';
     const walletEl = document.getElementById('wallet');
     const connectBtn = document.getElementById('connect');
     const claimBtn = document.getElementById('claim');
@@ -84,7 +85,6 @@
     const explorerEl = document.getElementById('explorer');
     let wallet = null;
 
-    function shortAddress(value) { return value ? value.slice(0, 6) + '…' + value.slice(-6) : ''; }
     function setStatus(text, type='info') { statusEl.className = 'status ' + type; statusEl.textContent = text; }
     function solanaProvider() { return window.solana || (window.phantom && window.phantom.solana); }
 
@@ -136,7 +136,7 @@
       explorerEl.textContent = '';
       setStatus('Sending 0.1 SOL from the Devnet faucet…', 'info');
       try {
-        const response = await fetch('/api/devnet/sol-faucet', {
+        const response = await fetch(API_BASE + '/api/devnet/sol-faucet', {
           method: 'POST',
           headers: {'content-type':'application/json'},
           body: JSON.stringify({wallet})
