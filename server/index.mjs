@@ -2,6 +2,7 @@ import http from 'node:http';
 
 const handlers = {
   '/api/data': () => import('../api/data.ts'),
+  '/api/mainnet/prices': () => import('../api/mainnet/prices.ts'),
   '/api/devnet/quote': () => import('../api/devnet/quote.ts'),
   '/api/devnet/faucet': () => import('../api/devnet/faucet.ts'),
   '/api/devnet/settle': () => import('../api/devnet/settle.ts'),
@@ -37,7 +38,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     if (url.pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, service: 'stockpassport-market', network: 'devnet' }));
+      res.end(JSON.stringify({ ok: true, service: 'stockpassport-market', network: 'devnet', priceSource: 'mainnet-jupiter-price-v3' }));
       return;
     }
     const load = handlers[url.pathname];
