@@ -32,7 +32,7 @@ export type DevnetQuote = {
   marketWallet: string | null;
   demoOnly: boolean;
 };
-export type WalletSigner = { publicKey: PublicKey; signTransaction: (transaction: Transaction) => Promise<Transaction> };
+export type WalletSigner = { publicKey: PublicKey; signTransaction: (transaction: Transaction) => Promise<Transaction>; signMessage?: (message: Uint8Array) => Promise<Uint8Array | { signature: Uint8Array }> };
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 function apiUrl(path: string): string { return `${API_BASE}${path}`; }
@@ -78,17 +78,13 @@ export async function executeDevnetTrade(quote: DevnetQuote, signer: WalletSigne
   const transaction = await buildDevnetPaymentTransaction(quote, signer);
   const signed = await signer.signTransaction(transaction);
   const paymentSignature = await CONNECTION.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-  await CONNECTION.confirmTransaction({ signature: paymentSignature, blockhash: signed.recentBlockhash!, lastValidBlockHeight: signed.lastValidBlockHeight! }, 'confirmed');
-
-  const response = await fetch(apiUrl('/api/devnet/settle'), {
+  await CONNECTION.confirmTransaction({ signature: paymentSignature, blockhash: transaction.recentBlockhash!, lastValidBlockHeight: transaction.lastValidBlockHeight! }, 'confirmed');
+  const settlementResponse = await fetch(apiUrl('/api/devnet/settle'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quoteId: quote.quoteId, side: quote.side, assetId: quote.assetId, wallet: signer.publicKey.toBase58(), paymentSignature, assetAmount: String(quote.assetAmount), cashAmountUnits: quote.cashAmountUnits, expiresAt: quote.expiresAt }),
+    body: JSON.stringify({ quoteId: quote.quoteId, wallet: signer.publicKey.toBase58(), paymentSignature }),
   });
-  const result = await response.json() as { error?: string; settlementSignature?: string; marketWallet?: string; reused?: boolean };
-  if (!response.ok || !result.settlementSignature || !result.marketWallet) throw new Error(result.error || 'Market settlement failed after the user payment was confirmed');
-  await CONNECTION.confirmTransaction(result.settlementSignature, 'confirmed');
-  return { paymentSignature, settlementSignature: result.settlementSignature, marketWallet: result.marketWallet, reused: result.reused };
+  const settlement = await settlementResponse.json() as { settlementSignature?: string; marketWallet?: string; reused?: boolean; error?: string };
+  if (!settlementResponse.ok || !settlement.settlementSignature || !settlement.marketWallet) throw new Error(settlement.error || 'Devnet settlement failed');
+  return { paymentSignature, settlementSignature: settlement.settlementSignature, marketWallet: settlement.marketWallet, reused: settlement.reused };
 }
-
-export function humanAmountFromUnits(units: string, decimals: number): string { return (Number(units) / 10 ** decimals).toLocaleString(undefined, { maximumFractionDigits: decimals }); }
