@@ -55,11 +55,11 @@ function Root() {
 
   useEffect(() => {
     if (address && walletProvider) {
-      setConnectedWalletSigner(createReownWalletSigner(address, walletProvider));
+      const signer = createReownWalletSigner(address, walletProvider);
+      setConnectedWalletSigner(signer);
     } else {
       setConnectedWalletSigner(null);
     }
-
     setWalletDisconnect(async () => {
       await disconnect({ namespace: 'solana' });
     });
@@ -67,17 +67,15 @@ function Root() {
 
   useEffect(() => {
     if (!signInPending || !isConnected || !address || !walletProvider || signingRef.current) return;
-
     signingRef.current = true;
     const signIn = async () => {
       try {
         const statement = [
           'StockPassport sign in',
           `Wallet: ${address}`,
-          'Network: Solana Devnet or Testnet',
+          'Network: Solana Devnet',
           'Purpose: Open my StockPassport portfolio',
         ].join('\n');
-
         await walletProvider.signMessage(new TextEncoder().encode(statement));
         sessionStorage.setItem('stockpassport.wallet', new PublicKey(address).toBase58());
         setEntered(true);
@@ -88,24 +86,29 @@ function Root() {
         setSignInPending(false);
       }
     };
-
     void signIn();
   }, [signInPending, isConnected, address, walletProvider]);
 
-  const enterWithWallet = () => {
-    if (!REOWN_CONFIGURED || !appKit) {
+  const openWalletModal = () => {
+    if (!REOWN_CONFIGURED) {
       window.alert('StockPassport WalletConnect is not configured.');
       return;
     }
 
     setSignInPending(true);
 
-    if (isConnected) return;
-
-    void appKit.open({ view: 'Connect', namespace: 'solana' });
+    try {
+      // Use the initialized AppKit instance directly. This follows Reown's
+      // documented programmatic modal trigger and avoids a hook/context race
+      // during the first wallet connection.
+      appKit.open({ view: 'Connect', namespace: 'solana' });
+    } catch (cause) {
+      setSignInPending(false);
+      window.alert(cause instanceof Error ? cause.message : 'Unable to open the wallet connection modal.');
+    }
   };
 
-  return entered ? <PortfolioApp /> : <Landing onEnter={enterWithWallet} />;
+  return entered ? <PortfolioApp /> : <Landing onEnter={() => openWalletModal()} />;
 }
 
 createRoot(document.getElementById('root')!).render(
