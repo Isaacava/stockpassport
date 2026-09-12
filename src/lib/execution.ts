@@ -2,6 +2,7 @@ import { PublicKey, Transaction } from '@solana/web3.js';
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
 import { CONNECTION } from '../config/network';
 import { DEVNET_ASSETS, DEVNET_CASH_MINT } from '../config/assets';
+import type { WalletSigner } from './wallet';
 
 export type TradeSide = 'buy' | 'sell';
 export type DevnetQuote = {
@@ -32,7 +33,6 @@ export type DevnetQuote = {
   marketWallet: string | null;
   demoOnly: boolean;
 };
-export type WalletSigner = { publicKey: PublicKey; signTransaction: (transaction: Transaction) => Promise<Transaction>; signMessage?: (message: Uint8Array) => Promise<Uint8Array | { signature: Uint8Array }> };
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 function apiUrl(path: string): string { return `${API_BASE}${path}`; }
