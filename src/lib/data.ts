@@ -60,8 +60,13 @@ async function request<T>(init: RequestInit & { query?: string } = {}): Promise<
   return data;
 }
 
+function normalizeRule(rule: PersistedRule): PersistedRule {
+  return rule.rule_type === 'target_allocation' ? { ...rule, rule_type: 'target_allocations' } : rule;
+}
+
 export async function loadPortfolioData(wallet: string): Promise<PortfolioData> {
-  return request<PortfolioData>({ query: `?wallet=${encodeURIComponent(wallet)}` });
+  const data = await request<PortfolioData>({ query: `?wallet=${encodeURIComponent(wallet)}` });
+  return { ...data, rules: data.rules.map(normalizeRule) };
 }
 
 export async function savePortfolio(wallet: string, input: { id?: string; name: string; description?: string }): Promise<PersistedPortfolio> {
@@ -70,8 +75,9 @@ export async function savePortfolio(wallet: string, input: { id?: string; name: 
 }
 
 export async function saveRule(wallet: string, input: { id?: string; portfolioId: string; ruleType: string; enabled: boolean; parameters: Record<string, unknown> }): Promise<PersistedRule> {
-  const data = await request<{ rule: PersistedRule }>({ method: 'POST', body: JSON.stringify({ action: 'saveRule', wallet, ...input }) });
-  return data.rule;
+  const wireRuleType = input.ruleType === 'target_allocations' ? 'target_allocation' : input.ruleType;
+  const data = await request<{ rule: PersistedRule }>({ method: 'POST', body: JSON.stringify({ action: 'saveRule', wallet, ruleType: wireRuleType, ...input, ruleType: wireRuleType }) });
+  return normalizeRule(data.rule);
 }
 
 export async function recordActivity(wallet: string, input: { eventType: string; signature?: string; payload?: Record<string, unknown> }): Promise<PersistedActivity> {
