@@ -83,9 +83,12 @@
 - Kept `target_allocation` as the wire/database rule type so it matches the live Supabase CHECK constraint and reloads correctly.
 
 ### Faucet
-- Demo-USDC faucet is a real Devnet market-wallet transfer.
-- Server checks Supabase activity history and rate-limits a wallet to one faucet claim per hour.
-- Client refreshes chain/data after a successful claim without duplicating the server-side activity record.
+- Demo-USDC faucet remains a real Devnet market-wallet token transfer with one claim per hour per wallet.
+- Added a separate `public/faucet/index.html` page dedicated to claiming free Devnet SOL; it is intentionally separate from the portfolio/trading UI.
+- The SOL faucet pays `0.1 SOL` per successful claim, once per hour per wallet.
+- Added `api/devnet/sol-faucet.ts`, which transfers real Devnet SOL from the dedicated server-side market wallet and records `sol_faucet` activity for rate limiting/audit history.
+- Faucet UI shows wallet, Devnet network, current balance, claim status and a Solana Explorer link after confirmation.
+- The SOL faucet is explicitly labelled Devnet-only and never represents mainnet SOL value.
 
 ### Token-2022 readiness
 - Token scanner reads both legacy SPL Token accounts and Token-2022 accounts.
@@ -103,7 +106,7 @@
 - Service ID: `srv-daiaov6k1f9s73bgfpo0`
 - Region: Frankfurt.
 - Auto-deploy configured from `main`; manual deploys were used when connected auto-deploy lagged behind GitHub pushes.
-- `server/index.mjs` exposes `/health`, `/api/data`, `/api/mainnet/prices`, `/api/devnet/quote`, `/api/devnet/faucet`, `/api/devnet/settle`.
+- `server/index.mjs` exposes `/health`, `/api/data`, `/api/mainnet/prices`, `/api/devnet/quote`, `/api/devnet/faucet`, `/api/devnet/sol-faucet`, `/api/devnet/settle`.
 - `/health` advertises the Devnet execution network and Mainnet-Jupiter price source.
 - Required server-side Mainnet price configuration is documented in `.env.example` (`MAINNET_PRICE_API_URL`, optional `JUPITER_API_KEY`).
 - Latest verified live Render deploy before the current commit series is `dep-daikvvnqj5pc73ai1qp0`; the newest `main` commit is currently being deployed as `dep-dail2bm7bikc7393jl9g`.
@@ -114,7 +117,7 @@
 - Mainnet price-layer run `34666347554` failed on two strict TypeScript issues: optional price narrowing and a duplicate ruleType payload field.
 - Fixed the duplicate ruleType field in commit `bf309f59e567971d21e3278902aeb9339940dcb1`.
 - Added strict `Number.isFinite` narrowing in commit `29280c2ab92478c995a4616a3e27f68bed1df9d1`.
-- Fresh main-branch build run `34696058053` is currently `in_progress`; do not call the newest head green until rechecked.
+- Fresh main-branch build run `34696058053` was still `in_progress` at the last documented check; do not call the newest head green until rechecked.
 
 ## Current required configuration
 ### Render server
@@ -143,10 +146,10 @@
 - `VITE_DEVNET_GOOG_MINT`
 
 ## Remaining critical work
-1. Verify fresh CI run `34696058053` and latest Render deploy `dep-dail2bm7bikc7393jl9g`.
-2. Configure the dedicated Render market wallet, synthetic mint addresses and Supabase service-role key; then verify `/health`, Mainnet prices, quote, faucet, buy and sell with a real Devnet wallet.
+1. Verify fresh CI on the newest `main` commit and the latest Render deploy after the faucet changes.
+2. Configure the dedicated Render market wallet, synthetic mint addresses and Supabase service-role key; then verify `/health`, Mainnet prices, quote, SOL faucet, token faucet, buy and sell with a real Devnet wallet.
 3. Create/configure the separate StockPassport Vercel project; existing `agentmarket` must remain untouched.
-4. Run complete Devnet lifecycle: faucet → buy → refresh → deliberately trigger rule violation → explicit proposal → wallet-signed rebalance → refresh → Activity/Passport verification.
+4. Run complete Devnet lifecycle: SOL faucet → token faucet → buy → refresh → deliberately trigger rule violation → explicit proposal → wallet-signed rebalance → refresh → Activity/Passport verification.
 5. Add signed-wallet authorization to `/api/data` before broad public deployment.
 6. Persist the rule proposal lifecycle in `rule_proposals` with proposed/authorized/executed/expired/rejected transitions and execution metadata.
 7. Final mobile QA, failure-state QA, security QA and hackathon demo walkthrough.
@@ -166,6 +169,7 @@
 - Solana Mainnet/Jupiter is reference-price truth only for the demo.
 - Mainnet execution adapter fails closed when production execution is not configured.
 - Rule execution requires explicit user authorization and wallet signing.
+- Devnet faucet claims are explicitly separate from any Mainnet asset or value.
 
 ## Handoff rule
 Update this file after every meaningful milestone with what changed, commit SHA, verification status, remaining blockers, and exact next highest-priority task.
