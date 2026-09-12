@@ -7,8 +7,11 @@ export type TradeSide = 'buy' | 'sell';
 export type DevnetQuote = { quoteId: string; expiresAt: string; assetId: string; referenceSymbol: string; side: TradeSide; assetAmount: number; assetAmountUnits: string; referencePriceUsd: number; executionPriceUsd: number; spreadBps: number; cashAmount: number; cashAmountUnits: string; cashDecimals: number; assetDecimals: number; cashSymbol: string; network: 'devnet'; marketWallet: string | null; demoOnly: boolean };
 export type WalletSigner = { publicKey: PublicKey; signTransaction: (transaction: Transaction) => Promise<Transaction> };
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+function apiUrl(path: string): string { return `${API_BASE}${path}`; }
+
 export async function getDevnetQuote(assetId: string, side: TradeSide, amount: number): Promise<DevnetQuote> {
-  const response = await fetch(`/api/devnet/quote?assetId=${encodeURIComponent(assetId)}&side=${side}&amount=${encodeURIComponent(String(amount))}`, { cache: 'no-store' });
+  const response = await fetch(apiUrl(`/api/devnet/quote?assetId=${encodeURIComponent(assetId)}&side=${side}&amount=${encodeURIComponent(String(amount))}`), { cache: 'no-store' });
   const data = await response.json() as DevnetQuote & { error?: string };
   if (!response.ok) throw new Error(data.error || 'Unable to get Devnet quote');
   return data;
@@ -50,7 +53,7 @@ export async function executeDevnetTrade(quote: DevnetQuote, signer: WalletSigne
   const paymentSignature = await CONNECTION.sendRawTransaction(signed.serialize(), { skipPreflight: false });
   await CONNECTION.confirmTransaction({ signature: paymentSignature, blockhash: signed.recentBlockhash!, lastValidBlockHeight: signed.lastValidBlockHeight! }, 'confirmed');
 
-  const response = await fetch('/api/devnet/settle', {
+  const response = await fetch(apiUrl('/api/devnet/settle'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ quoteId: quote.quoteId, side: quote.side, assetId: quote.assetId, wallet: signer.publicKey.toBase58(), paymentSignature, assetAmount: String(quote.assetAmount), cashAmountUnits: quote.cashAmountUnits, expiresAt: quote.expiresAt }),
