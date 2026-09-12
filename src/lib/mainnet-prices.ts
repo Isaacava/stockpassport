@@ -1,3 +1,5 @@
+import { fetchJson } from './api';
+
 export type MainnetReferencePrice = {
   assetId: string;
   demoSymbol: string;
@@ -12,17 +14,15 @@ export type MainnetReferencePrice = {
   network: 'mainnet-beta';
 };
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
-
-function apiUrl(path: string): string {
-  return `${API_BASE}${path}`;
-}
+type MainnetPriceResponse = {
+  network: 'mainnet-beta';
+  source: string;
+  prices: MainnetReferencePrice[];
+  fetchedAt: string;
+};
 
 export async function fetchMainnetReferencePrices(): Promise<MainnetReferencePrice[]> {
-  const response = await fetch(apiUrl('/api/mainnet/prices'), { cache: 'no-store' });
-  const data = await response.json() as { prices?: MainnetReferencePrice[]; error?: string };
-  if (!response.ok || !Array.isArray(data.prices)) {
-    throw new Error(data.error || 'Unable to load Mainnet reference prices.');
-  }
+  const data = await fetchJson<MainnetPriceResponse>('/api/mainnet/prices');
+  if (!Array.isArray(data.prices)) throw new Error('Mainnet reference service returned no prices.');
   return data.prices;
 }
