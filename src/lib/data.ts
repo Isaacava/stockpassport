@@ -38,21 +38,59 @@ export type PersistedTrade = {
   updated_at: string;
 };
 
+export type PersistedProposal = {
+  id: string;
+  portfolio_id: string;
+  wallet_address: string;
+  chain_snapshot: Record<string, unknown>;
+  proposal: Record<string, unknown>;
+  status: string;
+  created_at: string;
+  expires_at: string | null;
+};
+
 export type PortfolioData = {
   portfolio: PersistedPortfolio;
   portfolios: PersistedPortfolio[];
   rules: PersistedRule[];
+  proposals: PersistedProposal[];
   activities: PersistedActivity[];
   trades: PersistedTrade[];
 };
 
+type BrowserWallet = {
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array | { signature: Uint8Array }>;
+};
+
+type WindowWithWallet = Window & { solana?: BrowserWallet };
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 function apiUrl(path: string): string { return `${API_BASE}${path}`; }
 
-async function request<T>(init: RequestInit & { query?: string } = {}): Promise<T> {
+function toBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function signedMutationHeaders(body: string, wallet: string): Promise<Record<string, string>> {
+  const parsed = JSON.parse(body) as { action?: string };
+  if (parsed.action !== 'savePortfolio' && parsed.action !== 'saveRule') return {};
+  const signer = (window as WindowWithWallet).solana;
+  if (!signer?.signMessage) throw new Error('Wallet message signing is required to save portfolio settings or rules.');
+  const timestamp = String(Date.now());
+  const message = `StockPassport authorization\n${wallet}\n${timestamp}\nPOST\n/api/data\n${body}`;
+  const result = await signer.signMessage(new TextEncoder().encode(message));
+  const signature = result instanceof Uint8Array ? result : result.signature;
+  return { 'X-SP-Auth-Timestamp': timestamp, 'X-SP-Auth-Message': message, 'X-SP-Auth-Signature': toBase64(signature) };
+}
+
+async function request<T>(init: RequestInit & { query?: string; wallet?: string } = {}): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(init.headers as Record<string, string> | undefined) };
+  if (init.method === 'POST' && typeof init.body === 'string' && init.wallet) Object.assign(headers, await signedMutationHeaders(init.body, init.wallet));
   const response = await fetch(apiUrl(`/api/data${init.query ?? ''}`), {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    headers,
     cache: 'no-store',
   });
   const data = await response.json() as T & { error?: string };
@@ -66,17 +104,19 @@ function normalizeRule(rule: PersistedRule): PersistedRule {
 
 export async function loadPortfolioData(wallet: string): Promise<PortfolioData> {
   const data = await request<PortfolioData>({ query: `?wallet=${encodeURIComponent(wallet)}` });
-  return { ...data, rules: data.rules.map(normalizeRule) };
+  return { ...data, rules: data.rules.map(normalizeRule), proposals: data.proposals ?? [] };
 }
 
 export async function savePortfolio(wallet: string, input: { id?: string; name: string; description?: string }): Promise<PersistedPortfolio> {
-  const data = await request<{ portfolio: PersistedPortfolio }>({ method: 'POST', body: JSON.stringify({ action: 'savePortfolio', wallet, ...input }) });
+  const body = JSON.stringify({ action: 'savePortfolio', wallet, ...input });
+  const data = await request<{ portfolio: PersistedPortfolio }>({ method: 'POST', body, wallet });
   return data.portfolio;
 }
 
 export async function saveRule(wallet: string, input: { id?: string; portfolioId: string; ruleType: string; enabled: boolean; parameters: Record<string, unknown> }): Promise<PersistedRule> {
   const wireRuleType = input.ruleType === 'target_allocations' ? 'target_allocation' : input.ruleType;
-  const data = await request<{ rule: PersistedRule }>({ method: 'POST', body: JSON.stringify({ action: 'saveRule', wallet, ...input, ruleType: wireRuleType }) });
+  const body = JSON.stringify({ action: 'saveRule', wallet, ...input, ruleType: wireRuleType });
+  const data = await request<{ rule: PersistedRule }>({ method: 'POST', body, wallet });
   return normalizeRule(data.rule);
 }
 
