@@ -1,8 +1,10 @@
+import { createPublicKey, verify } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { PublicKey } from '@solana/web3.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const AUTH_WINDOW_MS = 2 * 60 * 1000;
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -18,6 +20,24 @@ function requireWallet(value: unknown): string {
 function getDb() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error('Supabase server configuration is missing');
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+function verifyMutationSignature(req: Request, wallet: string, body: string): void {
+  const timestamp = req.headers.get('x-sp-auth-timestamp');
+  const message = req.headers.get('x-sp-auth-message');
+  const signatureB64 = req.headers.get('x-sp-auth-signature');
+  if (!timestamp || !message || !signatureB64) throw new Error('Wallet signature authorization is required for this mutation');
+  const timestampMs = Number(timestamp);
+  if (!Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > AUTH_WINDOW_MS) throw new Error('Wallet authorization has expired');
+
+  const expectedMessage = `StockPassport authorization\n${wallet}\n${timestamp}\n${req.method}\n/api/data\n${body}`;
+  if (message !== expectedMessage) throw new Error('Wallet authorization message does not match the request');
+
+  let signature: Buffer;
+  try { signature = Buffer.from(signatureB64, 'base64'); } catch { throw new Error('Invalid wallet signature encoding'); }
+  const publicKeyDer = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), new PublicKey(wallet).toBytes()]);
+  const publicKey = createPublicKey({ key: publicKeyDer, format: 'der', type: 'spki' });
+  if (!verify(null, Buffer.from(message, 'utf8'), publicKey, signature)) throw new Error('Wallet signature verification failed');
 }
 
 export default async function handler(req: Request): Promise<Response> {
@@ -55,8 +75,11 @@ export default async function handler(req: Request): Promise<Response> {
       return json({ portfolio, portfolios, rules: rulesResult.data ?? [], proposals: proposalsResult.data ?? [], activities: activityResult.data ?? [], trades: tradesResult.data ?? [] });
     }
 
-    const body = await req.json() as { action?: string; wallet?: string; [key: string]: unknown };
+    const rawBody = await req.text();
+    const body = JSON.parse(rawBody) as { action?: string; wallet?: string; [key: string]: unknown };
     const wallet = requireWallet(body.wallet);
+    const protectedMutation = body.action === 'savePortfolio' || body.action === 'saveRule';
+    if (protectedMutation) verifyMutationSignature(req, wallet, rawBody);
 
     if (body.action === 'savePortfolio') {
       const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'My Portfolio';
@@ -102,20 +125,8 @@ export default async function handler(req: Request): Promise<Response> {
             await db.from('rule_proposals').insert({
               portfolio_id: portfolioResult.data.id,
               wallet_address: wallet,
-              chain_snapshot: {
-                totalValueUsd: payload.totalValueUsd ?? null,
-                cashPct: payload.cashPct ?? null,
-                referencePriceSource: payload.referencePriceSource ?? null,
-                referenceObservedAt: payload.referenceObservedAt ?? null,
-              },
-              proposal: {
-                sourceProposalId: payload.proposalId,
-                kind: payload.kind ?? null,
-                assetId: payload.assetId ?? null,
-                targetPct: payload.targetPct ?? null,
-                valueUsd: payload.valueUsd ?? null,
-                settlementSignature: typeof body.signature === 'string' ? body.signature : null,
-              },
+              chain_snapshot: { totalValueUsd: payload.totalValueUsd ?? null, cashPct: payload.cashPct ?? null, referencePriceSource: payload.referencePriceSource ?? null, referenceObservedAt: payload.referenceObservedAt ?? null },
+              proposal: { sourceProposalId: payload.proposalId, kind: payload.kind ?? null, assetId: payload.assetId ?? null, targetPct: payload.targetPct ?? null, valueUsd: payload.valueUsd ?? null, settlementSignature: typeof body.signature === 'string' ? body.signature : null },
               status: 'executed',
             });
           }
