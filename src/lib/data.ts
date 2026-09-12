@@ -75,9 +75,10 @@ function toBase64(bytes: Uint8Array): string {
 
 async function signedMutationHeaders(body: string, wallet: string): Promise<Record<string, string>> {
   const parsed = JSON.parse(body) as { action?: string };
-  if (parsed.action !== 'savePortfolio' && parsed.action !== 'saveRule') return {};
+  const protectedActions = new Set(['savePortfolio', 'saveRule', 'recordRuleProposal', 'updateRuleProposal']);
+  if (!parsed.action || !protectedActions.has(parsed.action)) return {};
   const signer = (window as WindowWithWallet).solana;
-  if (!signer?.signMessage) throw new Error('Wallet message signing is required to save portfolio settings or rules.');
+  if (!signer?.signMessage) throw new Error('Wallet message signing is required for this action.');
   const timestamp = String(Date.now());
   const message = `StockPassport authorization\n${wallet}\n${timestamp}\nPOST\n/api/data\n${body}`;
   const result = await signer.signMessage(new TextEncoder().encode(message));
@@ -88,11 +89,7 @@ async function signedMutationHeaders(body: string, wallet: string): Promise<Reco
 async function request<T>(init: RequestInit & { query?: string; wallet?: string } = {}): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(init.headers as Record<string, string> | undefined) };
   if (init.method === 'POST' && typeof init.body === 'string' && init.wallet) Object.assign(headers, await signedMutationHeaders(init.body, init.wallet));
-  const response = await fetch(apiUrl(`/api/data${init.query ?? ''}`), {
-    ...init,
-    headers,
-    cache: 'no-store',
-  });
+  const response = await fetch(apiUrl(`/api/data${init.query ?? ''}`), { ...init, headers, cache: 'no-store' });
   const data = await response.json() as T & { error?: string };
   if (!response.ok) throw new Error(data.error || 'Unable to persist StockPassport state');
   return data;
@@ -118,6 +115,18 @@ export async function saveRule(wallet: string, input: { id?: string; portfolioId
   const body = JSON.stringify({ action: 'saveRule', wallet, ...input, ruleType: wireRuleType });
   const data = await request<{ rule: PersistedRule }>({ method: 'POST', body, wallet });
   return normalizeRule(data.rule);
+}
+
+export async function recordRuleProposal(wallet: string, input: { portfolioId: string; proposal: Record<string, unknown>; chainSnapshot?: Record<string, unknown>; status?: string; expiresAt?: string }): Promise<PersistedProposal> {
+  const body = JSON.stringify({ action: 'recordRuleProposal', wallet, ...input });
+  const data = await request<{ proposal: PersistedProposal }>({ method: 'POST', body, wallet });
+  return data.proposal;
+}
+
+export async function updateRuleProposal(wallet: string, id: string, input: { status: string; proposal?: Record<string, unknown>; chainSnapshot?: Record<string, unknown> }): Promise<PersistedProposal> {
+  const body = JSON.stringify({ action: 'updateRuleProposal', wallet, id, ...input });
+  const data = await request<{ proposal: PersistedProposal }>({ method: 'POST', body, wallet });
+  return data.proposal;
 }
 
 export async function recordActivity(wallet: string, input: { eventType: string; signature?: string; payload?: Record<string, unknown> }): Promise<PersistedActivity> {
