@@ -78,12 +78,12 @@
 - Added protected `/api/data` service-role API for wallet-scoped portfolio/rules/activity/trade lifecycle persistence.
 - Browser never receives Supabase service-role credentials.
 - `/api/data` returns wallet-scoped `rule_proposals` alongside portfolio/rule/activity/trade state.
-- Executed rule actions are durably written into `rule_proposals` with chain snapshot, proposal metadata and settlement signature when the existing UI emits `rule_proposal_executed`.
-- Added durable proposal recording support for proposed/authorized/executed/expired/rejected statuses.
-- **New:** portfolio and rule mutation calls now require a recent Ed25519 wallet message signature matching the exact request body; normal trade/activity writes are not prompted for extra message signatures.
-- `src/lib/data.ts` automatically obtains the wallet signature from the connected Solana provider for the protected settings/rule writes.
-- Server verifies the Solana wallet public key and signature using Node's native Ed25519 verification before changing portfolio/rule metadata.
-- Added `src/lib/data.ts` client abstraction and persisted proposal types.
+- Added durable proposal recording and update endpoints for `proposed`, `authorized`, `executed`, `expired` and `rejected` states.
+- Proposal reads lazily expire stale `proposed`/`authorized` records whose `expires_at` has passed.
+- Protected proposal create/update mutations with the same recent Ed25519 wallet authorization used for portfolio/rule writes.
+- `src/lib/data.ts` now exposes typed `PersistedProposal`, `recordRuleProposal`, and `updateRuleProposal` helpers.
+- Portfolio and rule mutation calls require a recent Ed25519 wallet message signature matching the exact request body; normal trade/activity writes are not prompted for extra message signatures.
+- Server verifies the Solana wallet public key and signature using Node's native Ed25519 verification before changing protected metadata.
 - Trade intents persist lifecycle statuses including `payment_pending`, `settled`, `failed` and `settlement_pending`.
 - Browser data/trade calls honor `VITE_API_BASE_URL`, allowing Vercel frontend traffic to use the dedicated Render API.
 - Fixed the rule persistence request to emit one authoritative `ruleType` field.
@@ -118,13 +118,14 @@
 - `/health` advertises the Devnet execution network and Mainnet-Jupiter price source.
 - Required server-side Mainnet price configuration is documented in `.env.example`.
 - Required server-side quote secret: `QUOTE_SIGNING_SECRET`.
-- Render logs verified a clean restart after the wallet-auth deployment and the service reported live at `https://stockpassport-market.onrender.com`.
+- Render logs verified clean restarts on the latest deployed code before this proposal-lifecycle commit.
 
 ### CI
 - Build workflow runs `npm install` + `npm run build`.
 - `34697023682` on commit `541993245aa30fa64b64db9822283dbb5bcba938` completed successfully.
 - `34697033674` on commit `1676beabc008003c9ebdc2959fc96240f17b3aaa` completed successfully.
-- `34697102059` on commit `33e618f3c93eeee3976ae48fce9f94f1c88d8012` completed successfully after the wallet-signature authorization change.
+- `34697102059` on commit `33e618f3c93eeee3976ae48fce9f94f1c88d8012` completed successfully.
+- A new CI run will verify the current proposal-lifecycle client/API changes.
 
 ## Current required configuration
 ### Render server
@@ -156,8 +157,8 @@
 ## Remaining critical work
 1. Create/configure the separate StockPassport Vercel project; existing `agentmarket` must remain untouched.
 2. Configure the dedicated Render market wallet, synthetic mint addresses, Supabase service-role key and `QUOTE_SIGNING_SECRET`; then verify `/health`, Mainnet prices, signed quote, SOL faucet, token faucet, buy and sell with a real Devnet wallet.
-3. Run complete Devnet lifecycle: SOL faucet → token faucet → buy → refresh → deliberately trigger rule violation → explicit proposal → wallet-signed rebalance → refresh → Activity/Passport verification.
-4. Expand proposal persistence to capture explicit authorized records before execution and automatic expiry/rejection transitions.
+3. Wire the existing Rules UI's in-memory proposal authorization to `recordRuleProposal`/`updateRuleProposal` so the full proposed → authorized → executed path is visible in the durable database.
+4. Run complete Devnet lifecycle: SOL faucet → token faucet → buy → refresh → deliberately trigger rule violation → explicit proposal → wallet-signed rebalance → refresh → Activity/Passport verification.
 5. Final mobile QA, failure-state QA, security QA and hackathon demo walkthrough.
 6. Mainnet execution adapter only after the Devnet demo is stable and a real xStocks/Jupiter-compatible execution route is verified. Until then Mainnet remains price/reference only.
 7. Final setup handoff: provide the complete list of required accounts, environment variables, Devnet wallets/mints, Supabase setup, Vercel configuration, Render configuration and deployment steps only after the live lifecycle is verified.
@@ -173,7 +174,7 @@
 - Quote amounts are server-signed before settlement.
 - Devnet market wallet is dedicated and server-only.
 - Supabase service-role key remains server-only.
-- Portfolio/rule metadata writes require wallet-signature authorization.
+- Portfolio/rule/proposal metadata writes require wallet-signature authorization.
 - Solana Devnet remains ownership/transaction source of truth for the demo.
 - Solana Mainnet/Jupiter is reference-price truth only for the demo.
 - Mainnet execution adapter fails closed when production execution is not configured.
