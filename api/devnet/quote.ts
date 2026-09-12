@@ -1,16 +1,4 @@
-const PRICES_USD: Record<string, number> = {
-  NVDA: 175,
-  AAPL: 230,
-  MSFT: 510,
-  GOOG: 250,
-};
-
-const ASSET_TO_REFERENCE: Record<string, string> = {
-  'nvda-demo': 'NVDA',
-  'aapl-demo': 'AAPL',
-  'msft-demo': 'MSFT',
-  'goog-demo': 'GOOG',
-};
+import { getMainnetPrice } from '../mainnet/prices';
 
 function toUnits(value: number, decimals: number): string {
   return String(Math.round(value * 10 ** decimals));
@@ -30,36 +18,48 @@ export default async function handler(req: Request): Promise<Response> {
     return Response.json({ error: 'assetId, side and positive amount are required' }, { status: 400 });
   }
 
-  const referenceSymbol = ASSET_TO_REFERENCE[assetId];
-  if (!referenceSymbol) {
-    return Response.json({ error: 'Unknown Devnet synthetic asset' }, { status: 404 });
+  if (assetId === 'goog-demo') {
+    // The demo keeps its historical GOOG label, while the Mainnet xStock reference
+    // is GOOGLx (Alphabet Class A). This mapping is intentionally explicit.
   }
 
-  const referencePriceUsd = PRICES_USD[referenceSymbol];
-  const spreadBps = 50;
-  const executionPriceUsd = side === 'buy'
-    ? referencePriceUsd * (1 + spreadBps / 10_000)
-    : referencePriceUsd * (1 - spreadBps / 10_000);
-  const cashAmount = amount * executionPriceUsd;
+  try {
+    const reference = await getMainnetPrice(assetId);
+    const spreadBps = 50;
+    const executionPriceUsd = side === 'buy'
+      ? reference.priceUsd * (1 + spreadBps / 10_000)
+      : reference.priceUsd * (1 - spreadBps / 10_000);
+    const cashAmount = amount * executionPriceUsd;
 
-  return Response.json({
-    quoteId: crypto.randomUUID(),
-    expiresAt: new Date(Date.now() + 30_000).toISOString(),
-    assetId,
-    referenceSymbol,
-    side,
-    assetAmount: amount,
-    assetAmountUnits: toUnits(amount, 6),
-    referencePriceUsd,
-    executionPriceUsd,
-    spreadBps,
-    cashAmount,
-    cashAmountUnits: toUnits(cashAmount, 6),
-    cashDecimals: 6,
-    assetDecimals: 6,
-    cashSymbol: 'DEMO-USDC',
-    network: 'devnet',
-    marketWallet: process.env.DEVNET_MARKET_WALLET ?? null,
-    demoOnly: true,
-  }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({
+      quoteId: crypto.randomUUID(),
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      assetId,
+      referenceSymbol: reference.referenceSymbol,
+      referenceMainnetMint: reference.mainnetMint,
+      referencePriceUsd: reference.priceUsd,
+      referencePriceChange24h: reference.priceChange24h,
+      referenceLiquidityUsd: reference.liquidityUsd,
+      referenceBlockId: reference.blockId,
+      referenceObservedAt: reference.observedAt,
+      referencePriceSource: reference.source,
+      referenceNetwork: reference.network,
+      side,
+      assetAmount: amount,
+      assetAmountUnits: toUnits(amount, 6),
+      executionPriceUsd,
+      spreadBps,
+      cashAmount,
+      cashAmountUnits: toUnits(cashAmount, 6),
+      cashDecimals: 6,
+      assetDecimals: 6,
+      cashSymbol: 'DEMO-USDC',
+      network: 'devnet',
+      executionNetwork: 'devnet',
+      marketWallet: process.env.DEVNET_MARKET_WALLET ?? null,
+      demoOnly: true,
+    }, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (cause) {
+    return Response.json({ error: cause instanceof Error ? cause.message : 'Unable to obtain a reliable Mainnet reference price' }, { status: 502 });
+  }
 }
