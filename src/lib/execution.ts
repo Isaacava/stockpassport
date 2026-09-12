@@ -19,7 +19,7 @@ export type DevnetQuote = {
   referenceLiquidityUsd: number | null;
   referenceBlockId: number | null;
   referenceObservedAt: string;
-  referencePriceSource: 'jupiter-price-v3-mainnet';
+  referencePriceSource: 'jupiter-price-v3-mainnet' | 'xstocks-public-price-api';
   referenceNetwork: 'mainnet-beta';
   side: TradeSide;
   assetAmount: number;
