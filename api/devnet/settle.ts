@@ -60,8 +60,8 @@ export default async function handler(req: Request): Promise<Response> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return Response.json({ error: 'Settlement persistence is not configured' }, { status: 503 });
 
   try {
-    const body = await req.json() as { side?: 'buy' | 'sell'; assetId?: string; wallet?: string; paymentSignature?: string; assetAmount?: string; cashAmountUnits?: string; expiresAt?: string };
-    if (!body.side || !body.assetId || !body.wallet || !body.paymentSignature || !body.assetAmount || !body.cashAmountUnits || !body.expiresAt) return Response.json({ error: 'Missing settlement fields' }, { status: 400 });
+    const body = await req.json() as { quoteId?: string; side?: 'buy' | 'sell'; assetId?: string; wallet?: string; paymentSignature?: string; assetAmount?: string; cashAmountUnits?: string; expiresAt?: string };
+    if (!body.quoteId || !body.side || !body.assetId || !body.wallet || !body.paymentSignature || !body.assetAmount || !body.cashAmountUnits || !body.expiresAt) return Response.json({ error: 'Missing settlement fields' }, { status: 400 });
     if (Date.parse(body.expiresAt) < Date.now()) return Response.json({ error: 'Quote expired' }, { status: 400 });
 
     const envName = ASSET_MINT_ENV[body.assetId];
@@ -78,23 +78,17 @@ export default async function handler(req: Request): Promise<Response> {
     const expectedCashRaw = quoteFor(body.assetId, body.side, Number(body.assetAmount));
     if (expectedCashRaw !== cashRaw) throw new Error('Quote amount is invalid or was modified');
 
-    const existing = await db.from('trade_intents').select('id,status,payment_signature,settlement_signature').eq('quote_id', body.paymentSignature ? (new URL(req.url)).searchParams.get('quoteId') ?? '' : '').eq('wallet_address', user.toBase58()).maybeSingle();
-    void existing;
-
-    const quoteId = (body as { quoteId?: string }).quoteId;
-    if (!quoteId) throw new Error('quoteId is required for idempotent settlement');
-
-    const existingTrade = await db.from('trade_intents').select('id,status,payment_signature,settlement_signature').eq('quote_id', quoteId).eq('wallet_address', user.toBase58()).maybeSingle();
+    const existingTrade = await db.from('trade_intents').select('id,status,payment_signature,settlement_signature').eq('quote_id', body.quoteId).eq('wallet_address', user.toBase58()).maybeSingle();
     if (existingTrade.error) throw existingTrade.error;
     if (existingTrade.data?.status === 'settled' && existingTrade.data.settlement_signature) return Response.json({ ok: true, reused: true, side: body.side, assetId: body.assetId, paymentSignature: existingTrade.data.payment_signature, settlementSignature: existingTrade.data.settlement_signature, marketWallet: market.publicKey.toBase58() });
     if (!existingTrade.data) {
-      const created = await db.from('trade_intents').insert({ user_id: null, wallet_address: user.toBase58(), quote_id: quoteId, asset_id: body.assetId, side: body.side, asset_amount_units: assetRaw.toString(), cash_amount_units: cashRaw.toString(), status: 'payment_confirmed', payment_signature: body.paymentSignature });
+      const created = await db.from('trade_intents').insert({ user_id: null, wallet_address: user.toBase58(), quote_id: body.quoteId, asset_id: body.assetId, side: body.side, asset_amount_units: assetRaw.toString(), cash_amount_units: cashRaw.toString(), status: 'payment_confirmed', payment_signature: body.paymentSignature });
       if (created.error) throw created.error;
     }
 
-    const lock = await db.from('trade_intents').update({ status: 'settlement_pending', payment_signature: body.paymentSignature }).eq('quote_id', quoteId).eq('wallet_address', user.toBase58()).in('status', ['created', 'payment_pending', 'payment_confirmed']).select('id').maybeSingle();
+    const lock = await db.from('trade_intents').update({ status: 'settlement_pending', payment_signature: body.paymentSignature }).eq('quote_id', body.quoteId).eq('wallet_address', user.toBase58()).in('status', ['created', 'payment_pending', 'payment_confirmed']).select('id').maybeSingle();
     if (!lock.data) {
-      const current = await db.from('trade_intents').select('status,settlement_signature,payment_signature').eq('quote_id', quoteId).eq('wallet_address', user.toBase58()).maybeSingle();
+      const current = await db.from('trade_intents').select('status,settlement_signature,payment_signature').eq('quote_id', body.quoteId).eq('wallet_address', user.toBase58()).maybeSingle();
       if (current.data?.status === 'settled' && current.data.settlement_signature) return Response.json({ ok: true, reused: true, side: body.side, assetId: body.assetId, paymentSignature: current.data.payment_signature, settlementSignature: current.data.settlement_signature, marketWallet: market.publicKey.toBase58() });
       return Response.json({ error: 'Settlement is already in progress for this quote.' }, { status: 409 });
     }
@@ -112,7 +106,7 @@ export default async function handler(req: Request): Promise<Response> {
       settlementSignature = await transferFromMarket(connection, market, cashMint, user, cashRaw, 6);
     }
 
-    await db.from('trade_intents').update({ status: 'settled', payment_signature: body.paymentSignature, settlement_signature: settlementSignature, error_message: null }).eq('quote_id', quoteId).eq('wallet_address', user.toBase58());
+    await db.from('trade_intents').update({ status: 'settled', payment_signature: body.paymentSignature, settlement_signature: settlementSignature, error_message: null }).eq('quote_id', body.quoteId).eq('wallet_address', user.toBase58());
     return Response.json({ ok: true, reused: false, side: body.side, assetId: body.assetId, referencePriceUsd: reference, paymentSignature: body.paymentSignature, settlementSignature, marketWallet: market.publicKey.toBase58() });
   } catch (cause) {
     return Response.json({ error: cause instanceof Error ? cause.message : 'Settlement failed' }, { status: 400 });
