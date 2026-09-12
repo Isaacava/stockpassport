@@ -18,7 +18,7 @@ function loadMarketKeypair(): Keypair {
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405 });
   if (!CASH_MINT || !MARKET_WALLET) return Response.json({ error: 'Devnet faucet is not configured' }, { status: 503 });
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return Response.json({ error: 'Faucet persistence is not configured' }, { status: 503 });
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return Response.json({ error: 'Faucet rate limiting is not configured' }, { status: 503 });
 
   try {
     const body = await req.json() as { wallet?: string };
@@ -40,8 +40,6 @@ export default async function handler(req: Request): Promise<Response> {
     const signature = await connection.sendTransaction(tx, [market], { preflightCommitment: 'confirmed' });
     await connection.confirmTransaction(signature, 'confirmed');
 
-    const { error: recordError } = await db.from('activity_events').insert({ user_id: null, wallet_address: user.toBase58(), event_type: 'demo_faucet', network: 'devnet', signature, payload: { amount: 1000, symbol: 'DEMO-USDC', demoOnly: true } });
-    if (recordError) throw recordError;
     return Response.json({ ok: true, amountUnits: FAUCET_AMOUNT_UNITS.toString(), amount: 1000, signature, marketWallet: market.publicKey.toBase58(), demoOnly: true });
   } catch (cause) {
     return Response.json({ error: cause instanceof Error ? cause.message : 'Faucet failed' }, { status: 400 });
