@@ -4,97 +4,95 @@
 - Repo: `Isaacava/stockpassport`
 - Product: StockPassport — Solana-native programmable portfolio for synthetic tokenized-stock demo assets on Devnet, with a Mainnet adapter target.
 - Current network: Solana Devnet.
-- Hackathon deadline: 6 days remaining from 2026-09-12.
+- Hackathon window: 6 days remaining from 2026-09-12.
 
-## Core product decision
-StockPassport is focused on **programmable investing portfolios**, not a generic exchange. Users define portfolio behavior, the app evaluates actual holdings, produces deterministic proposals, and only moves funds after explicit authorization.
+## Architecture
+- Vercel: frontend and Vercel-compatible `/api/*` handlers.
+- Render Free: separate `stockpassport-market` service for the same API handlers through `server/index.mjs`.
+- Supabase Free: dedicated `StockPassport` project for application persistence.
+- Solana: authoritative source of token ownership and confirmed transaction state.
+- Existing Vercel/Render projects remain untouched.
 
-## Architecture decision — hosting + data
-- Vercel: StockPassport frontend and lightweight web delivery.
-- Render Hobby: protected Devnet market/settlement service. Existing Render services are untouched.
-- Supabase: application database/Auth/persistence metadata. Solana remains the source of truth for ownership and confirmed transactions.
-- The existing Vercel and Render projects must not be modified for StockPassport; use separate projects/services.
-- Supabase account currently has one active healthy project and one inactive project, so one active Free-project slot remains available. Do not create the new project until the organization is explicitly confirmed for the project-creation action.
-- Render account workspace currently contains existing services but remains below the Hobby limit of 25 services.
+## Supabase
+- Project: `StockPassport`
+- Project ref: `pwcsnthuvebzfpqprslw`
+- Region: `eu-west-1`
+- Status verified: `ACTIVE_HEALTHY`
+- URL: `https://pwcsnthuvebzfpqprslw.supabase.co`
+- Core tables live: profiles, portfolios, portfolio_rules, rule_proposals, trade_intents, activity_events.
+- Portfolio records now have wallet-native ownership metadata.
+- `set_updated_at` trigger function has fixed `search_path`.
+- Foreign-key indexes were added for activity/trade user IDs.
+- Security advisor warning for mutable function search path has been fixed.
+- Remaining performance advisor messages are mostly RLS init-plan optimizations and unused-index info; they are not blockers for the hackathon MVP.
 
-## Source of truth
-- Wallet SOL balance: confirmed Solana RPC.
-- Token ownership: confirmed token-account state.
-- Frontend state is cache/presentation only.
-- Supabase stores application metadata, rules, proposals, trade lifecycle records and audit indexes; it does not replace chain ownership.
-- Every confirmed trade must be followed by a fresh on-chain read.
-- Failed transactions must not be treated as successful local state changes.
+## Completed product foundation
+### Wallet/on-chain
+- React + TypeScript + Vite scaffold.
+- Devnet RPC connection and confirmed SOL reads.
+- Wallet connect/disconnect using `window.solana` signing provider.
+- Confirmed synthetic token-account discovery.
+- Explorer address/transaction links.
+- Synthetic assets always labelled as demo securities.
 
-## Devnet asset model
-Devnet assets are synthetic demo securities and must always be labeled as such:
-- `NVDAx-DEMO`
-- `AAPLx-DEMO`
-- `MSFTx-DEMO`
-- `GOOGx-DEMO`
-- `DEMO-USDC`
+### Devnet assets
+- Demo-USDC plus NVDAx-DEMO, AAPLx-DEMO, MSFTx-DEMO and GOOGx-DEMO.
+- Bootstrap script creates deterministic synthetic assets and writes mint configuration.
+- Legacy SPL Token is used for the current Devnet demo.
 
-Mint addresses are injected through Vite environment variables after running the asset bootstrap script.
+### Real execution
+- Quote handler with controlled reference prices, buy/sell spread, 30-second expiry and integer-unit amounts.
+- User payment is a real wallet-signed Solana transaction.
+- Server settlement verifies exact confirmed token deltas before issuing the opposing leg.
+- Buy and sell are both real two-leg Devnet settlement paths.
+- Frontend re-reads chain state after confirmed settlement.
 
-## Completed
-### Wallet/on-chain foundation
-- React + TypeScript + Vite scaffold created.
-- Solana RPC connection configured for Devnet.
-- Wallet connect/disconnect using `window.solana` provider.
-- Confirmed SOL balance read.
-- Known Devnet synthetic token balances read from SPL token accounts.
-- Demo-USDC included in known holdings.
-- Explorer wallet links added.
-- Explicit warning that synthetic assets are not real equity.
+### Complete application UI
+- Overview: live portfolio valuation, SOL, cash, positions, rule state, health and funding.
+- Discover: all synthetic assets plus real quote/buy/sell flow.
+- Portfolio: persistent portfolio name/description plus confirmed positions.
+- Rules: max allocation, minimum reserve, rebalance threshold and recurring contribution configuration persisted to Supabase.
+- Activity: persisted audit records and trade lifecycle with Explorer links.
+- Passport: wallet, network, ownership source, configuration source and current proposals.
+- All pages use one wallet/session state instead of isolated demos.
 
-### Devnet asset bootstrap
-- `scripts/create-devnet-assets.mjs` creates Demo-USDC and four synthetic stock mints.
-- Assets use legacy SPL Token for the current Devnet demo.
-- Bootstrap writes mint IDs to `.env.devnet`.
+### Persistence/API
+- Added protected `/api/data` service-role API for wallet-scoped portfolio/rules/activity/trade lifecycle persistence.
+- Browser never receives Supabase service-role credentials.
+- Added `src/lib/data.ts` client abstraction.
+- Trade intents persist status transitions such as `payment_pending`, `settled`, `failed` and `settlement_pending`.
 
-### Real Devnet market foundation
-- `api/devnet/quote.ts`: controlled reference prices, buy/sell spread, 30-second quote expiry and integer-unit amounts.
-- `api/devnet/settle.ts`: verified two-leg settlement.
-- `api/devnet/faucet.ts`: controlled Demo-USDC funding.
-- `src/lib/execution.ts`: browser transaction construction, wallet signing, confirmation and settlement handoff.
-- Server-side market keypair is never shipped to the browser.
-- Buy: user pays Demo-USDC to market, server sends synthetic stock to user.
-- Sell: user pays synthetic stock to market, server sends Demo-USDC to user.
-- UI records payment and settlement signatures.
+### Render
+- Separate Render Free web service created: `stockpassport-market`.
+- URL: `https://stockpassport-market.onrender.com`
+- Service ID: `srv-daiaov6k1f9s73bgfpo0`
+- Region: Frankfurt.
+- Auto-deploy from `main`.
+- `server/index.mjs` exposes `/health`, `/api/data`, `/api/devnet/quote`, `/api/devnet/faucet`, `/api/devnet/settle` using the same handler modules as Vercel.
+- Public non-secret configuration is set; private market/Supabase service credentials still need to be entered as Render secrets before real settlement can run there.
 
-### Product UI
-- Overview derives portfolio value from confirmed token balances + controlled Devnet reference prices.
-- Discover lists synthetic assets and Buy/Sell controls.
-- Buy/Sell requests short-lived quotes, displays execution details, requires wallet signing, then refreshes chain state.
-- Portfolio shows confirmed positions.
-- Activity shows recorded signatures with Explorer links.
-- Passport provides audit/identity presentation without duplicating ownership.
-- Rules module has been started around deterministic portfolio constraints.
+## CI status
+- Original CI failure was caused by npm cache requiring a lockfile; cache was removed.
+- A green build was previously achieved after fixing `src/lib/tokens.ts` token registry typing.
+- A later UI integration run failed on an older commit because `LocalTrade` was missing `quoteId/status` in that commit.
+- That type was corrected in commit `d3508948a69c0d9375e569399a1d92925b706c4d`.
+- The latest CI run on commit `9b7a9ce0a8be121353084bff0586ae53fb996f48` is currently in progress after adding Render start support.
+- Do not call the current main build green until that latest run completes successfully.
 
-### Rules engine
-- Added deterministic rules module for max allocation, minimum cash reserve and rebalance threshold.
-- Rules calculate from current observed holdings/reference prices and output proposals only.
-- No rule automatically moves user funds without explicit authorization.
+## Current required secrets/configuration
+### Vercel or Render server
+- `DEVNET_RPC_URL=https://api.devnet.solana.com`
+- `DEVNET_MARKET_KEYPAIR_JSON` — dedicated Devnet market wallet secret; never commit.
+- `DEVNET_MARKET_WALLET`
+- `DEVNET_CASH_MINT`
+- `DEVNET_NVDA_MINT`
+- `DEVNET_AAPL_MINT`
+- `DEVNET_MSFT_MINT`
+- `DEVNET_GOOG_MINT`
+- `SUPABASE_URL=https://pwcsnthuvebzfpqprslw`
+- `SUPABASE_SERVICE_ROLE_KEY` — server-only secret; never expose in Vite/browser.
 
-### Supabase persistence layer
-- Added `supabase/migrations/001_stockpassport_core.sql`.
-- Tables cover profiles, portfolios, portfolio rules, rule proposals, trade intents and activity events.
-- RLS policies are included so users can only read/write records belonging to their authenticated account where applicable.
-- Added `@supabase/supabase-js` dependency.
-- Added optional browser client at `src/lib/supabase.ts`.
-- Added `.env.example` entries for `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
-- Never place the Supabase service-role key in browser/Vite variables.
-
-### CI
-- Initial CI failed because `actions/setup-node` had `cache: npm` but the repo had no lockfile.
-- Removed npm cache requirement.
-- CI correctly reached `npm install` and then the first real application build.
-- Exact TypeScript error was found in `src/lib/tokens.ts`: mixed `Map` entry types for stock assets and Demo-USDC.
-- Fixed the typing using an explicit `KnownToken` registry.
-- Latest CI run after the fix is currently in progress and has successfully reached `npm install`.
-- Temporary diagnostic capture remains in the workflow until a green build is confirmed; remove it after the next successful build.
-
-## Required deployment configuration
-### Browser/Vercel
+### Browser
 - `VITE_SOLANA_RPC_URL=https://api.devnet.solana.com`
 - `VITE_NETWORK=devnet`
 - `VITE_DEVNET_CASH_MINT`
@@ -102,75 +100,30 @@ Mint addresses are injected through Vite environment variables after running the
 - `VITE_DEVNET_AAPL_MINT`
 - `VITE_DEVNET_MSFT_MINT`
 - `VITE_DEVNET_GOOG_MINT`
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-### Render server
-- `DEVNET_RPC_URL`
-- `DEVNET_MARKET_KEYPAIR_JSON` — dedicated funded Devnet market wallet secret key; NEVER expose client-side.
-- `DEVNET_MARKET_WALLET`
-- `DEVNET_CASH_MINT`
-- `DEVNET_NVDA_MINT`
-- `DEVNET_AAPL_MINT`
-- `DEVNET_MSFT_MINT`
-- `DEVNET_GOOG_MINT`
-- Supabase server credentials only on Render if needed for settlement persistence; never expose service-role credentials client-side.
-
-## Next build sequence — highest priority
-1. Confirm the newest CI run is green and remove temporary diagnostic capture.
-2. Add Render-compatible HTTP server for `/quote`, `/faucet`, `/settle`, `/health` using the existing Devnet settlement logic.
-3. Make settlement idempotent using the Supabase `trade_intents` lifecycle and quote IDs so retries cannot double-settle.
-4. Create the dedicated StockPassport Supabase project after organization confirmation and apply the migration.
-5. Deploy the Render settlement service and configure secrets.
-6. Connect Vercel frontend to Render API and Supabase.
-7. Execute a real Devnet funding → buy → sell flow and verify every signature/balance on-chain.
-8. Finish rules UI and explicit rebalance execution.
-9. Expand Activity from local browser cache toward persisted/chain-indexed history.
-10. Add Mainnet adapter boundary + Token-2022 support + verified reference/oracle pricing.
-11. Final mobile QA, failure-state QA, security review, demo path and hackathon submission polish.
+## Next highest-priority tasks
+1. Confirm newest CI run green and remove temporary build diagnostic capture.
+2. Finish settlement idempotency using `trade_intents` so retrying the same quote/payment never issues a second opposing transfer.
+3. Finish faucet server rate guard and avoid duplicate faucet activity writes.
+4. Configure Render private secrets and verify `/health`, quote, funding, buy and sell paths against live Devnet state.
+5. Create/configure separate Vercel project deployment and environment variables.
+6. Run a complete real-wallet lifecycle: fund → buy → refresh → rule violation → proposal → sell/rebalance → refresh → verify activity/passport.
+7. Implement explicit rebalance authorization/execution instead of proposal-only state.
+8. Expand token scanner to support Token-2022 for future Mainnet assets.
+9. Add a production asset/execution adapter boundary for real xStocks/Jupiter integration.
+10. Final mobile QA, failure-state QA, security QA and hackathon demo walkthrough.
 
 ## Guardrails
 - No fake balances.
 - No client-side private keys.
-- No real-security claims for synthetic Devnet assets.
-- Use integer/base-unit arithmetic for token amounts and prices.
-- Network fees are separate from trade amounts.
-- Every trade shows exact pay/receive/fee/status.
-- Quote expiry must be enforced.
-- Market wallet must be a dedicated Devnet account, not a personal wallet.
-- Public endpoints must not expose the market wallet secret.
-- Mainnet asset code must support Token-2022 as well as legacy SPL where required.
-- Two-leg settlement must expose intermediate state and be retry/idempotency safe.
-
-## Known limitations not yet solved
-- Current token scanner only checks legacy SPL Token; Mainnet must also support Token-2022.
-- Wallet integration currently uses `window.solana`; later harden with Wallet Standard/adapter support.
-- Devnet reference prices are controlled demo values; production/mainnet should use verified market/oracle data.
-- Two-leg settlement is not atomic.
-- Public faucet needs abuse/rate controls before broad deployment.
-- Supabase project creation is pending explicit organization confirmation.
-- Vercel deployment has not yet been created for this repo.
-- Render StockPassport settlement service has not yet been created.
-
-## Current commits / checkpoints
-- CI fix: `5379dd6d914058041eb7e19e43d0100db2e3563b`
-- Devnet quote: `edcfc59d357fc6336da1809e7305e20a50df1f6f`
-- Devnet settlement: `2c115dd0428191e0a1c541ae3b24c266450746df`
-- Browser execution client: `346dc03f64f816212c0076a2c53ae5c39f463f0f`
-- Demo faucet: `fdef18f0529a49f73d41478b6698f8fa79087490`
-- Demo-USDC holdings: `3e8f7e9c9b61ddb1565642d33e4b0dfc30c85635`
-- Trading UI: `0b48a275fe5639616238b48f1ae9e70ab925c8b3`
-- Rules engine: `34d6a266630831fbfc70467f99daaf07e41de89f`
-- Token type fix: `55d8a36e7d8d948b0c38e1f5778b1148cf434da3`
-- Supabase dependency: `e98383e5ddecf6dddf513acde0272699af1b6ab1`
-- Supabase schema: `7dfb1f7d49e3676ba6aa87afbd236e229fd188ac`
-- Supabase browser client: `7a4c212a855e318445b69c494d13f10562c253a5`
-- Environment config: `d32e219a150c8dc5fd68c09d2f6ac1fd6e52ac96`
+- Synthetic Devnet assets never presented as real securities.
+- Integer/base-unit arithmetic for settlement.
+- Network fees separate from trade amounts.
+- Every trade exposes exact pay/receive and transaction signatures.
+- Quote expiry enforced.
+- Server market wallet must be dedicated Devnet account.
+- Service-role database key remains server-only.
+- Solana remains ownership/transaction source of truth.
 
 ## Handoff rule
-Update this file after every meaningful milestone with:
-- what changed;
-- commit SHA when known;
-- what was verified;
-- what remains broken;
-- the exact next highest-priority task.
+Update this file after every meaningful milestone with what changed, verification status, remaining blockers, and the next highest-priority task.
