@@ -7,6 +7,16 @@ const handlers = {
   '/api/devnet/settle': () => import('../api/devnet/settle.ts'),
 };
 
+const allowedOrigin = process.env.FRONTEND_ORIGIN || '';
+
+function applyCors(res, origin) {
+  const allowed = allowedOrigin && origin === allowedOrigin ? allowedOrigin : allowedOrigin ? allowedOrigin : '*';
+  res.setHeader('Access-Control-Allow-Origin', allowed);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+}
+
 async function readBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -14,6 +24,15 @@ async function readBody(req) {
 }
 
 const server = http.createServer(async (req, res) => {
+  const origin = req.headers.origin || '';
+  applyCors(res, origin);
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     if (url.pathname === '/health') {
