@@ -3,6 +3,7 @@ import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAcc
 import { CONNECTION } from '../config/network';
 import { DEVNET_ASSETS, DEVNET_CASH_MINT } from '../config/assets';
 import type { WalletSigner } from './wallet';
+export type { WalletSigner } from './wallet';
 
 export type TradeSide = 'buy' | 'sell';
 export type DevnetQuote = {
