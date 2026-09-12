@@ -12,11 +12,9 @@ const ASSET_TO_REFERENCE: Record<string, string> = {
   'goog-demo': 'GOOG',
 };
 
-const PUBLIC_CONFIG = {
-  cashSymbol: 'DEMO-USDC',
-  network: 'devnet',
-  marketWallet: process.env.DEVNET_MARKET_WALLET ?? '',
-};
+function toUnits(value: number, decimals: number): string {
+  return String(Math.round(value * 10 ** decimals));
+}
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'GET') {
@@ -51,13 +49,17 @@ export default async function handler(req: Request): Promise<Response> {
     referenceSymbol,
     side,
     assetAmount: amount,
+    assetAmountUnits: toUnits(amount, 6),
     referencePriceUsd,
     executionPriceUsd,
     spreadBps,
     cashAmount,
-    cashSymbol: PUBLIC_CONFIG.cashSymbol,
-    network: PUBLIC_CONFIG.network,
-    marketWallet: PUBLIC_CONFIG.marketWallet || null,
+    cashAmountUnits: toUnits(cashAmount, 6),
+    cashDecimals: 6,
+    assetDecimals: 6,
+    cashSymbol: 'DEMO-USDC',
+    network: 'devnet',
+    marketWallet: process.env.DEVNET_MARKET_WALLET ?? null,
     demoOnly: true,
   }, { headers: { 'Cache-Control': 'no-store' } });
 }
