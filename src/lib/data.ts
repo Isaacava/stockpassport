@@ -46,8 +46,11 @@ export type PortfolioData = {
   trades: PersistedTrade[];
 };
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+function apiUrl(path: string): string { return `${API_BASE}${path}`; }
+
 async function request<T>(init: RequestInit & { query?: string } = {}): Promise<T> {
-  const response = await fetch(`/api/data${init.query ?? ''}`, {
+  const response = await fetch(apiUrl(`/api/data${init.query ?? ''}`), {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
     cache: 'no-store',
