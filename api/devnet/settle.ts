@@ -1,7 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { createTransferCheckedInstruction, getAccount, getAssociatedTokenAddress, getOrCreateAssociatedTokenAccount } from '@solana/spl-token';
 import { createClient } from '@supabase/supabase-js';
+import { loadMarketKeypair } from './keypair';
 
 const ASSET_MINT_ENV: Record<string, string> = { 'nvda-demo': 'DEVNET_NVDA_MINT', 'aapl-demo': 'DEVNET_AAPL_MINT', 'msft-demo': 'DEVNET_MSFT_MINT', 'goog-demo': 'DEVNET_GOOG_MINT' };
 const RPC_URL = process.env.DEVNET_RPC_URL || 'https://api.devnet.solana.com';
@@ -11,11 +12,6 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const QUOTE_SIGNING_SECRET = process.env.QUOTE_SIGNING_SECRET;
 
-function loadMarketKeypair(): Keypair {
-  const raw = process.env.DEVNET_MARKET_KEYPAIR_JSON;
-  if (!raw) throw new Error('DEVNET_MARKET_KEYPAIR_JSON is not configured');
-  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw) as number[]));
-}
 function parseUnits(value: string, decimals: number): bigint {
   if (!/^\d+(\.\d+)?$/.test(value)) throw new Error('Invalid decimal amount');
   const [whole, fraction = ''] = value.split('.');
@@ -48,7 +44,7 @@ async function confirmPayment(connection: Connection, signature: string, expecte
   const marketDelta = extractOwnerDelta(tx, expectedMint, MARKET_WALLET!);
   if (sourceDelta !== expectedSourceDelta || marketDelta !== expectedMarketDelta) throw new Error('Payment transaction does not match the requested settlement amount and destination');
 }
-async function transferFromMarket(connection: Connection, market: Keypair, mint: PublicKey, destinationOwner: PublicKey, rawAmount: bigint, decimals: number): Promise<string> {
+async function transferFromMarket(connection: Connection, market: import('@solana/web3.js').Keypair, mint: PublicKey, destinationOwner: PublicKey, rawAmount: bigint, decimals: number): Promise<string> {
   const destination = await getOrCreateAssociatedTokenAccount(connection, market, mint, destinationOwner);
   const source = await getAssociatedTokenAddress(mint, market.publicKey);
   await getAccount(connection, source);
