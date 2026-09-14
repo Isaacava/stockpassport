@@ -29,15 +29,16 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install dependencies
-        run: npm install
-
       - name: Check market wallet secret
+        shell: bash
         run: |
           if [ -z "$DEVNET_MARKET_PRIVATE_KEY" ]; then
             echo "DEVNET_MARKET_PRIVATE_KEY GitHub Actions secret is required."
             exit 1
           fi
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
 
       - name: Create fixed-supply Devnet SPL assets
         run: node scripts/create-devnet-assets.mjs
