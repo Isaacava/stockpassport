@@ -1,0 +1,91 @@
+name: Create StockPassport Devnet SPL Assets (v2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rpc_url:
+        description: 'Solana Devnet RPC URL'
+        required: false
+        default: 'https://api.devnet.solana.com'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  create-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEVNET_MARKET_PRIVATE_KEY: ${{ secrets.DEVNET_MARKET_PRIVATE_KEY }}
+      DEVNET_RPC_URL: ${{ inputs.rpc_url }}
+      ENV_OUTPUT: .env.devnet
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check market wallet secret
+        shell: bash
+        run: |
+          if [ -z "$DEVNET_MARKET_PRIVATE_KEY" ]; then
+            echo "DEVNET_MARKET_PRIVATE_KEY GitHub Actions secret is required."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Validate market wallet and Devnet RPC
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { Keypair, Connection } from '@solana/web3.js';
+          const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+          const index = new Map(alphabet.split('').map((c, i) => [c, i]));
+          const text = process.env.DEVNET_MARKET_PRIVATE_KEY.trim();
+          let bytes = [0];
+          for (const char of text) {
+            const digit = index.get(char);
+            if (digit === undefined) throw new Error('Invalid base58 private key');
+            let carry = digit;
+            for (let i = 0; i < bytes.length; i += 1) {
+              const next = bytes[i] * 58 + carry;
+              bytes[i] = next & 255;
+              carry = next >> 8;
+            }
+            while (carry > 0) {
+              bytes.push(carry & 255);
+              carry >>= 8;
+            }
+          }
+          let leadingZeros = 0;
+          while (leadingZeros < text.length && text[leadingZeros] === '1') leadingZeros += 1;
+          const raw = new Uint8Array(leadingZeros + bytes.length);
+          for (let i = 0; i < bytes.length; i += 1) raw[raw.length - 1 - i] = bytes[i];
+          const wallet = Keypair.fromSecretKey(raw);
+          const connection = new Connection(process.env.DEVNET_RPC_URL, 'confirmed');
+          await connection.getLatestBlockhash();
+          console.log(`Market wallet: ${wallet.publicKey.toBase58()}`);
+          console.log(`RPC: ${process.env.DEVNET_RPC_URL}`);
+          NODE
+
+      - name: Create fixed-supply Devnet SPL assets
+        run: node scripts/create-devnet-assets.mjs
+
+      - name: Show generated mint addresses
+        run: |
+          echo 'Generated StockPassport Devnet configuration:'
+          cat .env.devnet
+
+      - name: Publish mint configuration as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stockpassport-devnet-assets
+          path: .env.devnet
+          if-no-files-found: error
+          retention-days: 7
