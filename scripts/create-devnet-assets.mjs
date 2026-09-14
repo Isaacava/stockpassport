@@ -1,16 +1,15 @@
-import { Connection, Keypair, clusterApiUrl, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, clusterApiUrl } from '@solana/web3.js';
 import { AuthorityType, createMint, getOrCreateAssociatedTokenAccount, mintTo, setAuthority } from '@solana/spl-token';
 import fs from 'node:fs/promises';
 
 const rpcUrl = process.env.DEVNET_RPC_URL || process.env.SOLANA_RPC_URL || clusterApiUrl('devnet');
 const privateKey = process.env.DEVNET_MARKET_PRIVATE_KEY;
-const marketWalletValue = process.env.DEVNET_MARKET_WALLET;
+const expectedMarketWallet = process.env.DEVNET_MARKET_WALLET?.trim() || '';
 const outputFile = process.env.ENV_OUTPUT || '.env.devnet';
 const SUPPLY = 1_000_000_000n;
 const DECIMALS = 6;
 
 if (!privateKey) throw new Error('Set DEVNET_MARKET_PRIVATE_KEY to the base58 Devnet market-wallet private key.');
-if (!marketWalletValue) throw new Error('Set DEVNET_MARKET_WALLET to the Devnet market-wallet public address.');
 
 function decodeBase58(value) {
   const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -38,8 +37,9 @@ function decodeBase58(value) {
 }
 
 const market = Keypair.fromSecretKey(decodeBase58(privateKey));
-const marketWallet = new PublicKey(marketWalletValue);
-if (!market.publicKey.equals(marketWallet)) throw new Error(`Market wallet mismatch: private key resolves to ${market.publicKey.toBase58()}`);
+if (expectedMarketWallet && market.publicKey.toBase58() !== expectedMarketWallet) {
+  throw new Error(`Market wallet mismatch: private key resolves to ${market.publicKey.toBase58()}`);
+}
 
 const connection = new Connection(rpcUrl, 'confirmed');
 const assets = [
